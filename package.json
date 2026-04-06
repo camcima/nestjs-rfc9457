@@ -71,7 +71,6 @@
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-prettier": "^5.0.0",
-    "fastify": "^4.0.0",
     "jest": "^30.3.0",
     "lefthook": "^1.0.0",
     "prettier": "^3.0.0",
@@ -82,6 +81,13 @@
     "ts-jest": "^29.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash@<4.18.0": ">=4.18.0",
+      "path-to-regexp@<8.4.0": ">=8.4.0",
+      "undici@<6.24.0": ">=6.24.0"
+    }
   },
   "repository": {
     "type": "git",
