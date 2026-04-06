@@ -39,9 +39,9 @@ interface Rfc9457ModuleOptions {
   // Strategy for populating the 'instance' field.
   // Default: 'none'
   instanceStrategy?:
-    | 'request-uri'  // Uses the request URL
-    | 'uuid'         // Generates a urn:uuid:<v4>
-    | 'none'         // Omits instance
+    | 'request-uri'  // Uses the request URL path (e.g., '/api/users/42')
+    | 'uuid'         // Generates a URN: 'urn:uuid:<v4>' (RFC 4122 format)
+    | 'none'         // Omits instance (field not present in response)
     | ((request: Request, exception: unknown) => string | undefined);
 
   // When true, non-HttpException throwables become 500 problem details.
@@ -135,6 +135,24 @@ After resolution, the factory applies:
 
 **Documented precedence policy**: User-declared `@ProblemType()` metadata outranks built-in validation mapping. If a user decorates a custom validation exception class with `@ProblemType()`, the decorator wins.
 
+#### Core-field overwrite rules
+
+After all mapping and merging, the factory owns final normalization of the five core RFC 9457 fields: `type`, `title`, `status`, `detail`, and `instance`. Extension members returned by mappers or decorator templates that collide with these keys are silently ignored — core fields are always controlled by the factory's resolution logic, never by extension data.
+
+#### Partial mapper output and `status` fallback
+
+When `exceptionMapper` returns a `ProblemDetail` without a `status` field, the factory applies this fallback chain:
+
+1. Use mapper-provided `status` if present and a valid HTTP status code
+2. Otherwise, if the exception is an `HttpException`, use `exception.getStatus()`
+3. Otherwise (catch-all mode, non-HTTP exception), default to `500`
+
+The same fallback applies to `@ProblemType()` templates missing a `status`.
+
+#### `Request` type coupling and non-HTTP reuse
+
+For v1, the factory signature uses the platform `Request` type. Non-HTTP reuse (GraphQL error formatters, microservice exception handlers) may require constructing an adapter or wrapper object that satisfies the `Request` shape with at minimum `{ url, method }`. A lightweight `ProblemContext` abstraction may be introduced in a future version to make cross-transport integration cleaner.
+
 #### `Rfc9457ExceptionFilter` (extends `BaseExceptionFilter`)
 
 A thin shell that catches exceptions and delegates to the factory.
@@ -167,6 +185,8 @@ export class InsufficientFundsException extends HttpException {
 ```
 
 The factory reads the template and merges it with runtime context — `detail` comes from the exception message, `instance` from the strategy, and extension members can be added via `exceptionMapper`.
+
+**Inheritance semantics**: Metadata lookup walks the prototype chain. If a child class has its own `@ProblemType()` decorator, it **fully overrides** the parent — there is no merging of parent and child metadata. If a child class is undecorated but extends a decorated parent, the parent's metadata is used. This matches standard `Reflect.getMetadata` behavior with prototype chain traversal.
 
 **Note**: `@ProblemType()` can also decorate plain `Error` subclasses (not extending `HttpException`), but these will only be handled by the factory when `catchAllExceptions: true`. Otherwise, they fall through to Nest's default error handling.
 
@@ -446,6 +466,12 @@ nestjs-rfc9457/
 ├── .eslintrc.js
 ├── .prettierrc
 ├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── ci.yml                                       # GitHub Actions CI pipeline
+├── .release-it.json
+├── lefthook.yml
+├── commitlint.config.js
 ├── LICENSE
 └── README.md
 ```
@@ -458,6 +484,63 @@ nestjs-rfc9457/
 - `"types"` points to `dist/index.d.ts`
 - Publish scope: `@camcima/nestjs-rfc9457`
 - HTTP status phrases sourced from Node's built-in `http.STATUS_CODES` (no hand-maintained table)
+
+### Tooling
+
+**Commit hooks** via [Lefthook](https://github.com/evilmartians/lefthook):
+
+- `pre-commit`: ESLint + Prettier (on staged files)
+- `commit-msg`: commitlint with `@commitlint/config-conventional`
+
+**Release management** via [release-it](https://github.com/release-it/release-it):
+
+- Conventional changelog generation
+- npm publish to `@camcima` scope
+- GitHub release creation
+- Version bumping via conventional commits
+
+### CI Pipeline (GitHub Actions)
+
+Single workflow (`.github/workflows/ci.yml`) triggered on push to `main` and all pull requests.
+
+**Jobs**:
+
+1. **lint** — runs ESLint on the entire codebase
+2. **format** — runs Prettier check (`--check` mode, no writes)
+3. **test** — runs the full test suite (unit + E2E)
+   - Matrix: Node 18, 20, 22
+   - Installs dependencies, builds, then runs `jest --coverage`
+4. **build** — verifies `tsc` compiles cleanly with `tsconfig.build.json`
+
+All jobs run in parallel. PRs require all four to pass.
+
+### Documentation (README.md)
+
+The README follows the conventions of well-regarded open-source NestJS libraries (e.g., `@nestjs/throttler`, `nestjs-cls`, `nestjs-pino`).
+
+**Structure**:
+
+1. **Header** — package name, one-line description, badges (npm version, CI status, license, npm downloads)
+2. **What is RFC 9457?** — brief explanation of Problem Details for HTTP APIs with a link to the RFC, plus a short example of what a problem details response looks like
+3. **Features** — bullet list of key capabilities
+4. **Installation** — `npm install` / `yarn add` / `pnpm add` commands with peer dependency notes
+5. **Quick Start** — minimal working example: import module, register in `AppModule`, done. Show a before/after of a NestJS error response vs. the RFC 9457 output.
+6. **Configuration** — full `Rfc9457ModuleOptions` reference with description of each option, defaults, and examples:
+   - `typeBaseUri`
+   - `instanceStrategy` (all four variants with examples)
+   - `catchAllExceptions`
+   - `exceptionMapper`
+   - `validationExceptionMapper`
+7. **Async Configuration** — `forRootAsync()` example with `ConfigService`
+8. **Custom Exception Types** — `@ProblemType()` decorator usage with examples, inheritance behavior documented
+9. **Validation Integration** — two subsections:
+   - Tier 1: automatic (zero config) with example output
+   - Tier 2: enhanced with `createRfc9457ValidationPipeExceptionFactory()`, step-by-step setup, example output
+10. **Advanced Usage** — using `ProblemDetailsFactory` directly (GraphQL, microservices, custom filters)
+11. **API Reference** — table of all public exports with one-line descriptions and links to relevant sections
+12. **Example Responses** — 3-4 annotated JSON examples showing different scenarios (basic 404, validation error, custom problem type, catch-all 500)
+13. **Contributing** — brief guide (clone, install, test, PR)
+14. **License** — MIT
 
 ### Public API exports (from `src/index.ts`)
 
