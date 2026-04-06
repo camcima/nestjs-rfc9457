@@ -1,6 +1,6 @@
 {
   "name": "@camcima/nestjs-rfc9457",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NestJS library for RFC 9457 Problem Details responses",
   "author": "Carlos Cima",
   "license": "MIT",
