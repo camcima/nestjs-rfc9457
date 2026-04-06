@@ -9,13 +9,39 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
   constructor(
     private readonly factory: ProblemDetailsFactory,
     @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions,
-    adapterHost: HttpAdapterHost,
+    private readonly adapterHost: HttpAdapterHost,
   ) {
     super(adapterHost.httpAdapter);
   }
 
   catch(exception: unknown, host: ArgumentsHost): void {
-    if (!(exception instanceof HttpException) && !this.options.catchAllExceptions) {
+    // Only handle HTTP context — other transports (WS, RPC) delegate to Nest
+    if (host.getType() !== 'http') {
+      super.catch(exception, host);
+      return;
+    }
+
+    const isHttpException = exception instanceof HttpException;
+
+    // Run exceptionMapper first, before the HttpException gate.
+    // This ensures custom mappers can handle non-HttpException types
+    // (e.g., DatabaseException) even without catchAllExceptions.
+    if (this.options.exceptionMapper) {
+      const ctx = host.switchToHttp();
+      const request = ctx.getRequest();
+      const mapped = this.options.exceptionMapper(exception, request);
+      if (mapped) {
+        const response = ctx.getResponse();
+        const { status, body } = this.factory.createFromMapped(mapped, exception, request);
+        const httpAdapter = this.adapterHost.httpAdapter;
+        httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
+        httpAdapter.reply(response, body, status);
+        return;
+      }
+    }
+
+    // Non-HttpException without a matching mapper: delegate or catch-all
+    if (!isHttpException && !this.options.catchAllExceptions) {
       super.catch(exception, host);
       return;
     }
@@ -24,7 +50,7 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     const request = ctx.getRequest();
     const response = ctx.getResponse();
     const { status, body } = this.factory.create(exception, request);
-    const httpAdapter = (this as any).httpAdapterHost?.httpAdapter || (this as any).applicationRef;
+    const httpAdapter = this.adapterHost.httpAdapter;
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
     httpAdapter.reply(response, body, status);
   }

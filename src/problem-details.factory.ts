@@ -8,7 +8,6 @@ import {
   Rfc9457Request,
 } from './rfc9457.interfaces';
 import { PROBLEM_TYPE_METADATA_KEY, RFC9457_MODULE_OPTIONS } from './rfc9457.constants';
-import { Rfc9457ValidationException } from './validation/rfc9457-validation.exception';
 import { toSlug } from './utils/slug';
 
 @Injectable()
@@ -17,12 +16,30 @@ export class ProblemDetailsFactory {
     @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions = {},
   ) {}
 
+  /**
+   * Create problem details from a pre-mapped result. Applies normalization
+   * (type, instance, status) but skips the resolution pipeline.
+   * Used by the filter when exceptionMapper already produced a result.
+   */
+  createFromMapped(
+    mapped: ProblemDetail,
+    exception: unknown,
+    request: Rfc9457Request,
+  ): { status: number; body: ProblemDetail } {
+    const result = { ...mapped };
+    return this.normalize(result, exception, request);
+  }
+
   create(exception: unknown, request: Rfc9457Request): { status: number; body: ProblemDetail } {
     let result: ProblemDetail | null = null;
 
-    // Step 1: exceptionMapper callback
+    // Step 1: exceptionMapper callback — also runs in the filter before
+    // the HttpException gate, so this is a fallback for direct factory usage.
     if (this.options.exceptionMapper) {
-      result = this.options.exceptionMapper(exception, request);
+      const mapped = this.options.exceptionMapper(exception, request);
+      if (mapped) {
+        result = { ...mapped };
+      }
     }
 
     // Step 2: @ProblemType() decorator metadata
@@ -76,6 +93,14 @@ export class ProblemDetailsFactory {
       };
     }
 
+    return this.normalize(result, exception, request);
+  }
+
+  private normalize(
+    result: ProblemDetail,
+    exception: unknown,
+    request: Rfc9457Request,
+  ): { status: number; body: ProblemDetail } {
     // Resolve definitive transport status
     const httpStatus = this.resolveStatus(result, exception);
 
@@ -114,11 +139,18 @@ export class ProblemDetailsFactory {
     return 500;
   }
 
+  private isUriReference(value: string): boolean {
+    // Matches any URI with a scheme (RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ))
+    return /^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(value);
+  }
+
   private normalizeType(result: ProblemDetail, status: number): string {
     if (result.type) {
-      if (result.type.includes('://') || result.type.startsWith('about:')) {
+      // Already a full URI reference (https://, urn:, about:, mailto:, etc.) — pass through
+      if (this.isUriReference(result.type)) {
         return result.type;
       }
+      // Bare slug — expand with typeBaseUri if configured
       if (this.options.typeBaseUri) {
         const baseUri = this.options.typeBaseUri.replace(/\/+$/, '');
         return `${baseUri}/${result.type}`;
@@ -168,15 +200,23 @@ export class ProblemDetailsFactory {
   }
 
   private handleValidation(exception: unknown, request: Rfc9457Request): ProblemDetail | null {
-    if (exception instanceof Rfc9457ValidationException) {
+    // Tier 2: Rfc9457ValidationException (detected by class name to avoid hard
+    // runtime dependency on class-validator — the exception and factory helper
+    // are opt-in modules that consumers import separately)
+    if (this.isRfc9457ValidationException(exception)) {
+      const validationErrors = (exception as any).validationErrors as unknown[];
       return {
         status: 400,
         title: 'Bad Request',
         detail: 'Request validation failed',
-        errors: exception.validationErrors.map((err) => this.flattenValidationError(err)),
+        errors: validationErrors.map((err) => this.flattenValidationError(err)),
       };
     }
 
+    // Tier 1: NestJS ValidationPipe default output — BadRequestException with
+    // the specific { message: string[], error: 'Bad Request' } shape that
+    // ValidationPipe produces. The `error` field check prevents misclassifying
+    // arbitrary business 400s that happen to use message arrays.
     if (this.isDefaultValidationException(exception)) {
       const response = (exception as HttpException).getResponse() as any;
       const messages: string[] = response.message;
@@ -194,12 +234,24 @@ export class ProblemDetailsFactory {
     return null;
   }
 
+  private isRfc9457ValidationException(exception: unknown): boolean {
+    return (
+      exception != null &&
+      typeof exception === 'object' &&
+      exception.constructor?.name === 'Rfc9457ValidationException' &&
+      'validationErrors' in exception
+    );
+  }
+
   private isDefaultValidationException(exception: unknown): boolean {
     if (!(exception instanceof HttpException)) return false;
     if (exception.getStatus() !== 400) return false;
     const response = exception.getResponse();
     if (typeof response !== 'object' || response === null) return false;
-    const msg = (response as any).message;
+    const resp = response as any;
+    // NestJS ValidationPipe always sets error: 'Bad Request' alongside message: string[]
+    if (resp.error !== 'Bad Request') return false;
+    const msg = resp.message;
     return Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string');
   }
 

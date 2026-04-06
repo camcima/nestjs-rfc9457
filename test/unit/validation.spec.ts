@@ -20,7 +20,7 @@ describe('Rfc9457ValidationException', () => {
     const exception = new Rfc9457ValidationException(errors);
     expect(exception.validationErrors).toBe(errors);
     expect(exception.validationErrors).toHaveLength(1);
-    expect(exception.validationErrors[0].property).toBe('email');
+    expect((exception.validationErrors[0] as any).property).toBe('email');
   });
 
   it('has status 400', () => {

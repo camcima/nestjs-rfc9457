@@ -49,10 +49,8 @@ describe('Rfc9457ExceptionFilter', () => {
     );
   });
 
-  it('delegates to super.catch() for non-HttpException when catchAllExceptions is false', () => {
+  it('delegates to super.catch() for non-HttpException when catchAllExceptions is false and no mapper', () => {
     const { filter, mockHost, mockHttpAdapter } = createMocks({ catchAllExceptions: false });
-    // BaseExceptionFilter.catch will throw because there is no real HTTP adapter,
-    // but we can verify that our filter does NOT call reply.
     try {
       filter.catch(new TypeError('unexpected'), mockHost);
     } catch {
@@ -88,5 +86,67 @@ describe('Rfc9457ExceptionFilter', () => {
     const responseBody = mockHttpAdapter.reply.mock.calls[0][1];
     expect(JSON.stringify(responseBody)).not.toContain('secret');
     expect(responseBody.detail).toBeUndefined();
+  });
+
+  it('exceptionMapper handles non-HttpException even without catchAllExceptions', () => {
+    class DatabaseException extends Error {
+      constructor() {
+        super('connection refused');
+      }
+    }
+
+    const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
+      catchAllExceptions: false,
+      exceptionMapper: (exception) => {
+        if (exception instanceof DatabaseException) {
+          return { type: 'https://example.com/db-error', status: 503, title: 'Database Error' };
+        }
+        return null;
+      },
+    });
+    filter.catch(new DatabaseException(), mockHost);
+    expect(mockHttpAdapter.setHeader).toHaveBeenCalledWith(
+      mockResponse,
+      'Content-Type',
+      'application/problem+json',
+    );
+    expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+      mockResponse,
+      expect.objectContaining({
+        type: 'https://example.com/db-error',
+        status: 503,
+        title: 'Database Error',
+      }),
+      503,
+    );
+  });
+
+  it('non-HttpException delegates to super when mapper returns null and catchAllExceptions is false', () => {
+    const { filter, mockHost, mockHttpAdapter } = createMocks({
+      catchAllExceptions: false,
+      exceptionMapper: () => null,
+    });
+    try {
+      filter.catch(new TypeError('unexpected'), mockHost);
+    } catch {
+      // Expected: BaseExceptionFilter.catch fails in test environment
+    }
+    expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+  });
+
+  it('delegates to super for non-http context', () => {
+    const { filter, mockHttpAdapter } = createMocks();
+    const wsHost = {
+      getType: () => 'ws',
+      switchToHttp: () => {
+        throw new Error('should not be called');
+      },
+    } as unknown as ArgumentsHost;
+    try {
+      filter.catch(new NotFoundException(), wsHost);
+    } catch {
+      // Expected: BaseExceptionFilter.catch fails in test environment
+    }
+    expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
   });
 });

@@ -197,6 +197,30 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(new InternalServerErrorException(), mockRequest);
       expect(body.type).toBe('https://api.example.com/problems/internal-server-error');
     });
+
+    it('passes through urn: URI references without rewriting', () => {
+      const factory = createFactory({
+        typeBaseUri: 'https://api.example.com/problems',
+        exceptionMapper: () => ({
+          type: 'urn:problem:quota-exceeded',
+          status: 429,
+        }),
+      });
+      const { body } = factory.create(new HttpException('quota', 429), mockRequest);
+      expect(body.type).toBe('urn:problem:quota-exceeded');
+    });
+
+    it('passes through mailto: URI references without rewriting', () => {
+      const factory = createFactory({
+        typeBaseUri: 'https://api.example.com/problems',
+        exceptionMapper: () => ({
+          type: 'mailto:support@example.com',
+          status: 400,
+        }),
+      });
+      const { body } = factory.create(new BadRequestException(), mockRequest);
+      expect(body.type).toBe('mailto:support@example.com');
+    });
   });
 
   describe('instanceStrategy', () => {
@@ -273,6 +297,19 @@ describe('ProblemDetailsFactory', () => {
       expect(status).toBe(403);
       expect(body.status).toBe(403);
       expect(body.title).toBe('Partial Response');
+    });
+
+    it('does not mutate the object returned by the mapper', () => {
+      const sharedResult = Object.freeze({
+        type: 'https://example.com/shared',
+        status: 422,
+        title: 'Shared',
+      });
+      const factory = createFactory({
+        exceptionMapper: () => sharedResult as any,
+      });
+      // Should not throw even though the returned object is frozen
+      expect(() => factory.create(new BadRequestException(), mockRequest)).not.toThrow();
     });
 
     it('handles mapper with extension members', () => {
@@ -460,6 +497,19 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(exception, mockRequest);
       expect(body.title).toBe('Validation Failed');
       expect(body.detail).toBe('field1 error; field2 error');
+      expect(body.errors).toBeUndefined();
+    });
+
+    it('does not misclassify business 400 with string array as validation', () => {
+      const factory = createFactory();
+      const exception = new BadRequestException({
+        message: ['unsupported foo', 'unsupported bar'],
+        // No error: 'Bad Request' field — this is a business error, not ValidationPipe output
+      });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      // Should NOT produce "Request validation failed" or an errors array
+      expect(body.detail).not.toBe('Request validation failed');
       expect(body.errors).toBeUndefined();
     });
 
