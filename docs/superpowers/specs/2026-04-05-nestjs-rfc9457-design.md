@@ -149,9 +149,19 @@ When `exceptionMapper` returns a `ProblemDetail` without a `status` field, the f
 
 The same fallback applies to `@ProblemType()` templates missing a `status`.
 
-#### `Request` type coupling and non-HTTP reuse
+#### `Rfc9457Request` type
 
-For v1, the factory signature uses the platform `Request` type. Non-HTTP reuse (GraphQL error formatters, microservice exception handlers) may require constructing an adapter or wrapper object that satisfies the `Request` shape with at minimum `{ url, method }`. A lightweight `ProblemContext` abstraction may be introduced in a future version to make cross-transport integration cleaner.
+The factory and all public callbacks use a minimal `Rfc9457Request` interface rather than platform-specific `Request` types:
+
+```typescript
+interface Rfc9457Request {
+  url: string;
+  method: string;
+  [key: string]: unknown;
+}
+```
+
+Both Express and Fastify request objects satisfy this interface. For non-HTTP reuse (GraphQL, microservices), callers construct a compatible object with at minimum `{ url, method }`.
 
 #### `Rfc9457ExceptionFilter` (extends `BaseExceptionFilter`)
 
@@ -245,8 +255,9 @@ When no custom mapper or decorator matches, `HttpException` instances are mapped
 
 ### `detail` derivation rules
 
-- If `getResponse()` returns a `string` → use as `detail`
-- If `getResponse()` returns an object with `message` as a non-empty `string` → use as `detail`
+- If `getResponse()` returns a `string` that differs from the default HTTP status phrase → use as `detail`
+- If `getResponse()` returns an object with `message` as a non-empty `string` that differs from the default HTTP status phrase → use as `detail`
+- If the value matches the default HTTP status phrase (e.g., `"Forbidden"` for a 403) → omit `detail` (it is boilerplate, not a user-provided message)
 - Otherwise → omit `detail`
 - Never stringify arbitrary objects into `detail`
 
@@ -338,6 +349,8 @@ This helper:
   ]
 }
 ```
+
+Nested validation errors are preserved as `children` arrays, matching the `class-validator` `ValidationError` tree structure. They are NOT flattened to dotted paths (e.g., `"address.zip"`). This preserves the original structure and avoids lossy transformations.
 
 `Rfc9457ValidationException` is exported (for `instanceof` checks) but not documented as a primary API — the helper factory is the recommended entry point.
 
@@ -553,5 +566,6 @@ The README follows the conventions of well-regarded open-source NestJS libraries
 - `Rfc9457OptionsFactory` (interface, for `useClass` async pattern)
 - `ProblemType` (decorator)
 - `ProblemTypeMetadata` (interface, for decorator options)
+- `Rfc9457Request` (interface, minimal request context)
 - `Rfc9457ValidationException` (class, exported but not primary API)
 - `createRfc9457ValidationPipeExceptionFactory` (function)
