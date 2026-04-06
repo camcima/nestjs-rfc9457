@@ -17,11 +17,7 @@ export class ProblemDetailsFactory {
     @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions = {},
   ) {}
 
-  /**
-   * Create problem details from a pre-mapped result. Applies normalization
-   * (type, instance, status) but skips the resolution pipeline.
-   * Used by the filter when exceptionMapper already produced a result.
-   */
+  /** @internal Used by Rfc9457ExceptionFilter — not part of the public API. */
   createFromMapped(
     mapped: ProblemDetail,
     exception: unknown,
@@ -31,6 +27,20 @@ export class ProblemDetailsFactory {
     return this.normalize(result, exception, request);
   }
 
+  /**
+   * Resolve an exception to a Problem Details response.
+   * Always returns a result — the factory owns the fallback behavior.
+   *
+   * @param exception - The caught exception (any type)
+   * @param request - The incoming request context
+   */
+  create(exception: unknown, request: Rfc9457Request): { status: number; body: ProblemDetail };
+  /** @internal */
+  create(
+    exception: unknown,
+    request: Rfc9457Request,
+    options: { skipMapper: true },
+  ): { status: number; body: ProblemDetail };
   create(
     exception: unknown,
     request: Rfc9457Request,
