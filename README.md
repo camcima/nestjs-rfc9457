@@ -1,14 +1,22 @@
-# @camcima/nestjs-rfc9457
+<div align="center">
 
-> NestJS library for [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details HTTP error responses
+<picture>
+  <img alt="nestjs-rfc9457" src="assets/logo.svg" width="580">
+</picture>
 
-[![npm version](https://img.shields.io/npm/v/@camcima/nestjs-rfc9457.svg)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
+<br>
+
 [![CI](https://github.com/camcima/nestjs-rfc9457/actions/workflows/ci.yml/badge.svg)](https://github.com/camcima/nestjs-rfc9457/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm downloads](https://img.shields.io/npm/dm/@camcima/nestjs-rfc9457.svg)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
 [![codecov](https://codecov.io/gh/camcima/nestjs-rfc9457/graph/badge.svg)](https://codecov.io/gh/camcima/nestjs-rfc9457)
+[![npm version](https://img.shields.io/npm/v/@camcima/nestjs-rfc9457)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
+[![npm downloads](https://img.shields.io/npm/dm/@camcima/nestjs-rfc9457.svg)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-18%20%7C%2020%20%7C%2022-green.svg)](https://nodejs.org/)
 
----
+</div>
+
+NestJS library for [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details HTTP error responses.
 
 ## What is RFC 9457?
 

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 100">
+  <defs>
+    <style>
+      @media (prefers-color-scheme: dark) {
+        .logo-text { fill: #e6edf3; }
+        .accent { fill: #f85149; }
+        .accent-stroke { stroke: #f85149; fill: none; }
+        .brace { fill: #f8514980; }
+      }
+      @media (prefers-color-scheme: light) {
+        .logo-text { fill: #24292f; }
+        .accent { fill: #cf222e; }
+        .accent-stroke { stroke: #cf222e; fill: none; }
+        .brace { fill: #cf222e80; }
+      }
+    </style>
+  </defs>
+  <!-- Left curly brace -->
+  <text class="brace" x="8" y="74" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="300">{</text>
+  <!-- Warning triangle -->
+  <g transform="translate(52, 18)">
+    <path class="accent" d="M28,4 L52,52 L4,52 Z" fill="none" stroke-width="3.5" stroke-linejoin="round"/>
+    <line class="accent-stroke" x1="28" y1="22" x2="28" y2="38" stroke-width="3.5" stroke-linecap="round"/>
+    <circle class="accent" cx="28" cy="44" r="2.2"/>
+  </g>
+  <!-- Logo text -->
+  <text class="logo-text" x="118" y="66" font-family="Georgia, 'Times New Roman', serif" font-size="54" font-weight="bold" letter-spacing="3">nestjs-rfc9457</text>
+  <!-- Right curly brace -->
+  <text class="brace" x="638" y="74" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="300">}</text>
+</svg>
