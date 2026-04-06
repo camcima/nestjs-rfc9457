@@ -7,14 +7,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
-import { Rfc9457ModuleOptions } from '../../src/rfc9457.interfaces';
+import { Rfc9457ModuleOptions, Rfc9457Request } from '../../src/rfc9457.interfaces';
+import { Rfc9457ValidationException } from '../../src/validation/rfc9457-validation.exception';
 
 function createFactory(options: Rfc9457ModuleOptions = {}): ProblemDetailsFactory {
   return new ProblemDetailsFactory(options);
 }
 
-import { Rfc9457Request } from '../../src/rfc9457.interfaces';
-import { Rfc9457ValidationException } from '../../src/validation/rfc9457-validation.exception';
+/** Calls factory.create() and asserts the result is non-null. */
+function mustCreate(factory: ProblemDetailsFactory, exception: unknown, request: Rfc9457Request) {
+  const result = factory.create(exception, request);
+  if (!result) throw new Error('Expected factory.create() to return a result, got null');
+  return result;
+}
 
 const mockRequest: Rfc9457Request = { url: '/api/users/42', method: 'GET' };
 
@@ -22,7 +27,8 @@ describe('ProblemDetailsFactory', () => {
   describe('default HttpException mapping', () => {
     it('maps a 404 with custom string detail', () => {
       const factory = createFactory();
-      const { status, body } = factory.create(
+      const { status, body } = mustCreate(
+        factory,
         new NotFoundException('User 42 not found'),
         mockRequest,
       );
@@ -37,7 +43,7 @@ describe('ProblemDetailsFactory', () => {
 
     it('omits detail for default boilerplate message (no custom detail)', () => {
       const factory = createFactory();
-      const { status, body } = factory.create(new ForbiddenException(), mockRequest);
+      const { status, body } = mustCreate(factory, new ForbiddenException(), mockRequest);
       expect(status).toBe(403);
       expect(body.type).toBe('about:blank');
       expect(body.title).toBe('Forbidden');
@@ -48,7 +54,7 @@ describe('ProblemDetailsFactory', () => {
     it('maps a 400 with object response — extracts message string as detail', () => {
       const factory = createFactory();
       const exception = new BadRequestException({ message: 'Invalid email format', code: 'E001' });
-      const { status, body } = factory.create(exception, mockRequest);
+      const { status, body } = mustCreate(factory, exception, mockRequest);
       expect(status).toBe(400);
       expect(body.detail).toBe('Invalid email format');
     });
@@ -56,14 +62,15 @@ describe('ProblemDetailsFactory', () => {
     it('omits detail when object response message is not a string', () => {
       const factory = createFactory();
       const exception = new HttpException({ message: 12345 }, 400);
-      const { status, body } = factory.create(exception, mockRequest);
+      const { status, body } = mustCreate(factory, exception, mockRequest);
       expect(status).toBe(400);
       expect(body.detail).toBeUndefined();
     });
 
     it('maps a 500 HttpException', () => {
       const factory = createFactory();
-      const { status, body } = factory.create(
+      const { status, body } = mustCreate(
+        factory,
         new InternalServerErrorException('DB connection failed'),
         mockRequest,
       );
@@ -78,19 +85,19 @@ describe('ProblemDetailsFactory', () => {
   describe('RFC-sensitive invariants', () => {
     it('defaults type to about:blank when not set', () => {
       const factory = createFactory();
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.type).toBe('about:blank');
     });
 
     it('uses HTTP reason phrase as title when type is about:blank', () => {
       const factory = createFactory();
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.title).toBe('Not Found');
     });
 
     it('body.status matches returned transport status', () => {
       const factory = createFactory();
-      const { status, body } = factory.create(new ForbiddenException(), mockRequest);
+      const { status, body } = mustCreate(factory, new ForbiddenException(), mockRequest);
       expect(body.status).toBe(status);
       expect(status).toBe(403);
     });
@@ -104,7 +111,7 @@ describe('ProblemDetailsFactory', () => {
           customField: 'custom-value',
         }),
       });
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.type).toBe('about:blank');
       expect(body.title).toBe('Custom Title');
       expect(body.status).toBe(422);
@@ -117,28 +124,28 @@ describe('ProblemDetailsFactory', () => {
     it('uses string response as detail', () => {
       const factory = createFactory();
       const exception = new HttpException('Raw string error', 400);
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.detail).toBe('Raw string error');
     });
 
     it('extracts message string from object response', () => {
       const factory = createFactory();
       const exception = new HttpException({ message: 'Structured error' }, 400);
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.detail).toBe('Structured error');
     });
 
     it('omits detail when object response has no string message', () => {
       const factory = createFactory();
       const exception = new HttpException({ error: 'no message key' }, 400);
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.detail).toBeUndefined();
     });
 
     it('omits detail when message is an empty string', () => {
       const factory = createFactory();
       const exception = new HttpException({ message: '' }, 400);
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.detail).toBeUndefined();
     });
   });
@@ -146,13 +153,13 @@ describe('ProblemDetailsFactory', () => {
   describe('typeBaseUri', () => {
     it('generates type URI with slug when typeBaseUri is configured', () => {
       const factory = createFactory({ typeBaseUri: 'https://api.example.com/problems' });
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.type).toBe('https://api.example.com/problems/not-found');
     });
 
     it('strips trailing slash from typeBaseUri', () => {
       const factory = createFactory({ typeBaseUri: 'https://api.example.com/problems/' });
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.type).toBe('https://api.example.com/problems/not-found');
     });
 
@@ -164,7 +171,7 @@ describe('ProblemDetailsFactory', () => {
           status: 400,
         }),
       });
-      const { body } = factory.create(new BadRequestException(), mockRequest);
+      const { body } = mustCreate(factory, new BadRequestException(), mockRequest);
       expect(body.type).toBe('https://custom.example.com/my-type');
     });
 
@@ -176,7 +183,7 @@ describe('ProblemDetailsFactory', () => {
           status: 400,
         }),
       });
-      const { body } = factory.create(new BadRequestException(), mockRequest);
+      const { body } = mustCreate(factory, new BadRequestException(), mockRequest);
       expect(body.type).toBe('about:blank');
     });
 
@@ -188,13 +195,13 @@ describe('ProblemDetailsFactory', () => {
           status: 400,
         }),
       });
-      const { body } = factory.create(new BadRequestException(), mockRequest);
+      const { body } = mustCreate(factory, new BadRequestException(), mockRequest);
       expect(body.type).toBe('https://api.example.com/problems/custom-problem');
     });
 
     it('generates internal-server-error slug for 500', () => {
       const factory = createFactory({ typeBaseUri: 'https://api.example.com/problems' });
-      const { body } = factory.create(new InternalServerErrorException(), mockRequest);
+      const { body } = mustCreate(factory, new InternalServerErrorException(), mockRequest);
       expect(body.type).toBe('https://api.example.com/problems/internal-server-error');
     });
 
@@ -206,7 +213,7 @@ describe('ProblemDetailsFactory', () => {
           status: 429,
         }),
       });
-      const { body } = factory.create(new HttpException('quota', 429), mockRequest);
+      const { body } = mustCreate(factory, new HttpException('quota', 429), mockRequest);
       expect(body.type).toBe('urn:problem:quota-exceeded');
     });
 
@@ -218,7 +225,7 @@ describe('ProblemDetailsFactory', () => {
           status: 400,
         }),
       });
-      const { body } = factory.create(new BadRequestException(), mockRequest);
+      const { body } = mustCreate(factory, new BadRequestException(), mockRequest);
       expect(body.type).toBe('mailto:support@example.com');
     });
   });
@@ -226,19 +233,19 @@ describe('ProblemDetailsFactory', () => {
   describe('instanceStrategy', () => {
     it('omits instance by default (none)', () => {
       const factory = createFactory();
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.instance).toBeUndefined();
     });
 
     it('uses request URL path for request-uri strategy', () => {
       const factory = createFactory({ instanceStrategy: 'request-uri' });
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.instance).toBe('/api/users/42');
     });
 
     it('generates urn:uuid for uuid strategy', () => {
       const factory = createFactory({ instanceStrategy: 'uuid' });
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.instance).toMatch(
         /^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
@@ -248,14 +255,14 @@ describe('ProblemDetailsFactory', () => {
       const customFn = jest.fn().mockReturnValue('custom-instance-id');
       const factory = createFactory({ instanceStrategy: customFn });
       const exception = new NotFoundException();
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.instance).toBe('custom-instance-id');
       expect(customFn).toHaveBeenCalledWith(mockRequest, exception);
     });
 
     it('omits instance when custom function returns undefined', () => {
       const factory = createFactory({ instanceStrategy: () => undefined });
-      const { body } = factory.create(new NotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new NotFoundException(), mockRequest);
       expect(body.instance).toBeUndefined();
     });
   });
@@ -270,7 +277,7 @@ describe('ProblemDetailsFactory', () => {
           detail: 'Mapper handled this',
         }),
       });
-      const { status, body } = factory.create(new BadRequestException(), mockRequest);
+      const { status, body } = mustCreate(factory, new BadRequestException(), mockRequest);
       expect(status).toBe(422);
       expect(body.type).toBe('https://example.com/custom');
       expect(body.title).toBe('Custom Problem');
@@ -281,7 +288,7 @@ describe('ProblemDetailsFactory', () => {
       const factory = createFactory({
         exceptionMapper: () => null,
       });
-      const { status, body } = factory.create(new NotFoundException('test'), mockRequest);
+      const { status, body } = mustCreate(factory, new NotFoundException('test'), mockRequest);
       expect(status).toBe(404);
       expect(body.title).toBe('Not Found');
     });
@@ -293,7 +300,7 @@ describe('ProblemDetailsFactory', () => {
           detail: 'No status provided',
         }),
       });
-      const { status, body } = factory.create(new ForbiddenException(), mockRequest);
+      const { status, body } = mustCreate(factory, new ForbiddenException(), mockRequest);
       expect(status).toBe(403);
       expect(body.status).toBe(403);
       expect(body.title).toBe('Partial Response');
@@ -321,7 +328,7 @@ describe('ProblemDetailsFactory', () => {
           conflictingResource: '/api/items/5',
         }),
       });
-      const { body } = factory.create(new HttpException('conflict', 409), mockRequest);
+      const { body } = mustCreate(factory, new HttpException('conflict', 409), mockRequest);
       expect(body.retryAfter).toBe(30);
       expect(body.conflictingResource).toBe('/api/items/5');
     });
@@ -344,7 +351,7 @@ describe('ProblemDetailsFactory', () => {
       }
 
       const factory = createFactory();
-      const { status, body } = factory.create(new InsufficientFundsException(), mockRequest);
+      const { status, body } = mustCreate(factory, new InsufficientFundsException(), mockRequest);
       expect(status).toBe(422);
       expect(body.type).toBe('https://example.com/insufficient-funds');
       expect(body.title).toBe('Insufficient Funds');
@@ -369,7 +376,7 @@ describe('ProblemDetailsFactory', () => {
       }
 
       const factory = createFactory();
-      const { body } = factory.create(new SpecificException(), mockRequest);
+      const { body } = mustCreate(factory, new SpecificException(), mockRequest);
       expect(body.type).toBe('https://example.com/base-error');
       expect(body.detail).toBe('Specific error occurred');
     });
@@ -393,7 +400,7 @@ describe('ProblemDetailsFactory', () => {
       }
 
       const factory = createFactory();
-      const { status, body } = factory.create(new ChildException(), mockRequest);
+      const { status, body } = mustCreate(factory, new ChildException(), mockRequest);
       expect(status).toBe(422);
       expect(body.type).toBe('https://example.com/child');
       expect(body.title).not.toBe('Parent');
@@ -411,7 +418,7 @@ describe('ProblemDetailsFactory', () => {
       }
 
       const factory = createFactory();
-      const { status } = factory.create(new NoStatusException(), mockRequest);
+      const { status } = mustCreate(factory, new NoStatusException(), mockRequest);
       expect(status).toBe(418);
     });
   });
@@ -423,7 +430,7 @@ describe('ProblemDetailsFactory', () => {
         message: ['email must be an email', 'age must not be less than 0'],
         error: 'Bad Request',
       });
-      const { status, body } = factory.create(exception, mockRequest);
+      const { status, body } = mustCreate(factory, exception, mockRequest);
       expect(status).toBe(400);
       expect(body.type).toBe('about:blank');
       expect(body.title).toBe('Bad Request');
@@ -446,7 +453,7 @@ describe('ProblemDetailsFactory', () => {
         }),
       ];
       const exception = new Rfc9457ValidationException(errors);
-      const { status, body } = factory.create(exception, mockRequest);
+      const { status, body } = mustCreate(factory, exception, mockRequest);
       expect(status).toBe(400);
       expect(body.detail).toBe('Request validation failed');
       expect(body.errors).toEqual([
@@ -469,7 +476,7 @@ describe('ProblemDetailsFactory', () => {
         children: [childError],
       });
       const exception = new Rfc9457ValidationException([parentError]);
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       // Nested errors use children arrays, preserving the class-validator tree structure.
       // This is intentional: we do NOT flatten to dotted paths like "address.zip".
       expect(body.errors).toEqual([
@@ -494,7 +501,7 @@ describe('ProblemDetailsFactory', () => {
         message: ['field1 error', 'field2 error'],
         error: 'Bad Request',
       });
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.title).toBe('Validation Failed');
       expect(body.detail).toBe('field1 error; field2 error');
       expect(body.errors).toBeUndefined();
@@ -506,7 +513,7 @@ describe('ProblemDetailsFactory', () => {
         message: ['unsupported foo', 'unsupported bar'],
         // No error: 'Bad Request' field — this is a business error, not ValidationPipe output
       });
-      const { status, body } = factory.create(exception, mockRequest);
+      const { status, body } = mustCreate(factory, exception, mockRequest);
       expect(status).toBe(400);
       // Should NOT produce "Request validation failed" or an errors array
       expect(body.detail).not.toBe('Request validation failed');
@@ -523,61 +530,45 @@ describe('ProblemDetailsFactory', () => {
         },
       });
       const exception = new Rfc9457ValidationException([]);
-      const { body } = factory.create(exception, mockRequest);
+      const { body } = mustCreate(factory, exception, mockRequest);
       expect(body.title).toBe('Mapper Wins');
     });
   });
 
-  describe('unknown exception fallback', () => {
-    it('produces generic 500 for non-HttpException (catch-all mode)', () => {
-      const factory = createFactory({ catchAllExceptions: true });
-      const { status, body } = factory.create(new TypeError('Oops'), mockRequest);
-      expect(status).toBe(500);
-      expect(body.type).toBe('about:blank');
-      expect(body.title).toBe('Internal Server Error');
-      expect(body.detail).toBeUndefined();
-      expect(body.instance).toBeUndefined();
+  describe('unmatched exception handling', () => {
+    it('returns null for non-HttpException when no step matches (TypeError)', () => {
+      const factory = createFactory();
+      const result = factory.create(new TypeError('Oops'), mockRequest);
+      expect(result).toBeNull();
     });
 
-    it('does not leak stack trace or error message in catch-all fallback', () => {
-      const factory = createFactory({ catchAllExceptions: true });
-      const error = new Error('secret database password exposed');
-      const { body } = factory.create(error, mockRequest);
-      expect(JSON.stringify(body)).not.toContain('secret');
-      expect(JSON.stringify(body)).not.toContain('password');
-      expect(body.detail).toBeUndefined();
+    it('returns null for a plain Error with no mapper or decorator', () => {
+      const factory = createFactory();
+      const result = factory.create(new Error('secret database password exposed'), mockRequest);
+      expect(result).toBeNull();
     });
 
-    it('handles arbitrary object thrown', () => {
-      const factory = createFactory({ catchAllExceptions: true });
-      const { status, body } = factory.create({ weird: 'object' }, mockRequest);
-      expect(status).toBe(500);
-      expect(body.title).toBe('Internal Server Error');
-      expect(body.detail).toBeUndefined();
+    it('returns null for an arbitrary object thrown', () => {
+      const factory = createFactory();
+      const result = factory.create({ weird: 'object' }, mockRequest);
+      expect(result).toBeNull();
     });
 
-    it('handles string thrown', () => {
-      const factory = createFactory({ catchAllExceptions: true });
-      const { status, body } = factory.create('string error', mockRequest);
-      expect(status).toBe(500);
-      expect(body.title).toBe('Internal Server Error');
-      expect(body.detail).toBeUndefined();
+    it('returns null for a string thrown', () => {
+      const factory = createFactory();
+      const result = factory.create('string error', mockRequest);
+      expect(result).toBeNull();
     });
 
-    it('handles null thrown', () => {
-      const factory = createFactory({ catchAllExceptions: true });
-      const { status, body } = factory.create(null, mockRequest);
-      expect(status).toBe(500);
-      expect(body.title).toBe('Internal Server Error');
+    it('returns null for null thrown', () => {
+      const factory = createFactory();
+      const result = factory.create(null, mockRequest);
+      expect(result).toBeNull();
     });
 
-    it('uses typeBaseUri slug for unknown exception in catch-all', () => {
-      const factory = createFactory({
-        catchAllExceptions: true,
-        typeBaseUri: 'https://api.example.com/problems',
-      });
-      const { body } = factory.create(new Error('fail'), mockRequest);
-      expect(body.type).toBe('https://api.example.com/problems/internal-server-error');
+    it('does not throw when called with a non-HttpException', () => {
+      const factory = createFactory();
+      expect(() => factory.create(new TypeError('Oops'), mockRequest)).not.toThrow();
     });
   });
 
@@ -600,7 +591,7 @@ describe('ProblemDetailsFactory', () => {
           title: 'Mapper Priority',
         }),
       });
-      const { status, body } = factory.create(new DecoratedException(), mockRequest);
+      const { status, body } = mustCreate(factory, new DecoratedException(), mockRequest);
       expect(status).toBe(409);
       expect(body.type).toBe('https://example.com/mapper-wins');
     });
@@ -617,7 +608,7 @@ describe('ProblemDetailsFactory', () => {
       }
 
       const factory = createFactory();
-      const { body } = factory.create(new CustomNotFoundException(), mockRequest);
+      const { body } = mustCreate(factory, new CustomNotFoundException(), mockRequest);
       expect(body.type).toBe('https://example.com/custom-404');
       expect(body.title).toBe('Custom Not Found');
     });
@@ -634,7 +625,7 @@ describe('ProblemDetailsFactory', () => {
       }
 
       const factory = createFactory();
-      const { body } = factory.create(new CustomValidationException(), mockRequest);
+      const { body } = mustCreate(factory, new CustomValidationException(), mockRequest);
       expect(body.type).toBe('https://example.com/custom-validation');
       expect(body.errors).toBeUndefined();
     });

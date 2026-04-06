@@ -59,7 +59,7 @@ describe('Rfc9457ExceptionFilter', () => {
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
   });
 
-  it('handles non-HttpException when catchAllExceptions is true', () => {
+  it('produces generic 500 problem details for non-HttpException when catchAllExceptions is true', () => {
     const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
       catchAllExceptions: true,
     });
@@ -80,7 +80,7 @@ describe('Rfc9457ExceptionFilter', () => {
     );
   });
 
-  it('response body does not contain stack trace for catch-all exceptions', () => {
+  it('does not leak stack trace in catch-all mode', () => {
     const { filter, mockHost, mockHttpAdapter } = createMocks({ catchAllExceptions: true });
     filter.catch(new Error('secret info'), mockHost);
     const responseBody = mockHttpAdapter.reply.mock.calls[0][1];

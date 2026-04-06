@@ -18,29 +18,20 @@ export class ProblemDetailsFactory {
   ) {}
 
   /**
-   * Create problem details from a pre-mapped result. Applies normalization
-   * (type, instance, status) but skips the resolution pipeline.
-   * Used by the filter when exceptionMapper already produced a result.
+   * Resolve an exception to a Problem Details response.
+   *
+   * Returns null when no resolution step matched the exception — this signals
+   * that the caller should fall back to its own error handling (e.g., the
+   * filter delegates to Nest's default handler).
    */
-  createFromMapped(
-    mapped: ProblemDetail,
-    exception: unknown,
-    request: Rfc9457Request,
-  ): { status: number; body: ProblemDetail } {
-    const result = { ...mapped };
-    return this.normalize(result, exception, request);
-  }
-
   create(
     exception: unknown,
     request: Rfc9457Request,
-    options?: { skipMapper?: boolean },
-  ): { status: number; body: ProblemDetail } {
+  ): { status: number; body: ProblemDetail } | null {
     let result: ProblemDetail | null = null;
 
-    // Step 1: exceptionMapper callback.
-    // Skipped when the filter already ran the mapper (to avoid double invocation).
-    if (!options?.skipMapper && this.options.exceptionMapper) {
+    // Step 1: exceptionMapper callback
+    if (this.options.exceptionMapper) {
       const mapped = this.options.exceptionMapper(exception, request);
       if (mapped) {
         result = { ...mapped };
@@ -85,17 +76,10 @@ export class ProblemDetailsFactory {
       }
     }
 
-    // Step 5: Unknown exception fallback
-    // Internal safety net: the filter is responsible for routing only appropriate
-    // exceptions to the factory. If we reach here, it means no resolution step
-    // matched. Produce a generic 500 regardless of catchAllExceptions — this is
-    // defensive, not part of the public contract.
+    // No resolution step matched — return null so the caller can decide
+    // whether to produce a generic 500 or delegate elsewhere.
     if (!result) {
-      result = {
-        status: 500,
-        title: 'Internal Server Error',
-        // detail intentionally omitted — do not leak internal error info
-      };
+      return null;
     }
 
     return this.normalize(result, exception, request);

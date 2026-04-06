@@ -1,4 +1,4 @@
-import { ArgumentsHost, Catch, HttpException, Inject } from '@nestjs/common';
+import { ArgumentsHost, Catch, Inject } from '@nestjs/common';
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import { ProblemDetailsFactory } from './problem-details.factory';
 import { RFC9457_MODULE_OPTIONS, PROBLEM_CONTENT_TYPE } from './rfc9457.constants';
@@ -21,38 +21,38 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
       return;
     }
 
-    const isHttpException = exception instanceof HttpException;
+    const ctx = host.switchToHttp();
+    const request = ctx.getRequest();
 
-    // Run exceptionMapper first, before the HttpException gate.
-    // This ensures custom mappers can handle non-HttpException types
-    // (e.g., DatabaseException) even without catchAllExceptions.
-    if (this.options.exceptionMapper) {
-      const ctx = host.switchToHttp();
-      const request = ctx.getRequest();
-      const mapped = this.options.exceptionMapper(exception, request);
-      if (mapped) {
-        const response = ctx.getResponse();
-        const { status, body } = this.factory.createFromMapped(mapped, exception, request);
-        const httpAdapter = this.adapterHost.httpAdapter;
-        httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
-        httpAdapter.reply(response, body, status);
-        return;
-      }
-    }
+    // Let the factory try to resolve the exception through the full pipeline
+    // (mapper → decorator → validation → HttpException default).
+    // Returns null when no step matched.
+    const factoryResult = this.factory.create(exception, request);
 
-    // Non-HttpException without a matching mapper: delegate or catch-all
-    if (!isHttpException && !this.options.catchAllExceptions) {
-      super.catch(exception, host);
+    if (factoryResult) {
+      const response = ctx.getResponse();
+      const httpAdapter = this.adapterHost.httpAdapter;
+      httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
+      httpAdapter.reply(response, factoryResult.body, factoryResult.status);
       return;
     }
 
-    const ctx = host.switchToHttp();
-    const request = ctx.getRequest();
-    const response = ctx.getResponse();
-    // skipMapper: the filter already ran the mapper above and it returned null
-    const { status, body } = this.factory.create(exception, request, { skipMapper: true });
-    const httpAdapter = this.adapterHost.httpAdapter;
-    httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
-    httpAdapter.reply(response, body, status);
+    // No resolution step matched. For non-HttpExceptions in catch-all mode,
+    // produce a generic 500 problem details response.
+    if (this.options.catchAllExceptions) {
+      const response = ctx.getResponse();
+      const httpAdapter = this.adapterHost.httpAdapter;
+      const body = {
+        type: 'about:blank',
+        title: 'Internal Server Error',
+        status: 500,
+      };
+      httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
+      httpAdapter.reply(response, body, 500);
+      return;
+    }
+
+    // Nothing matched and catch-all is off — delegate to Nest's default handler
+    super.catch(exception, host);
   }
 }
