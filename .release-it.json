@@ -3,12 +3,15 @@
     "commitMessage": "chore: release v${version}",
     "tagName": "v${version}"
   },
-  "npm": { "publish": true, "publishArgs": ["--access public"] },
-  "github": { "release": true },
-  "plugins": {
-    "@release-it/conventional-changelog": {
-      "preset": "angular",
-      "infile": "CHANGELOG.md"
-    }
+  "github": {
+    "release": true
+  },
+  "npm": {
+    "publish": true,
+    "publishArgs": ["--access=public"]
+  },
+  "hooks": {
+    "before:init": ["npm run lint", "npm test"],
+    "after:bump": "npm run build"
   }
 }
