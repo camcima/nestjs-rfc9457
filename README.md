@@ -18,6 +18,23 @@
 
 NestJS library for [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details HTTP error responses.
 
+## Table of Contents
+
+- [What is RFC 9457?](#what-is-rfc-9457)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Async Configuration](#async-configuration)
+- [Custom Exception Types](#custom-exception-types)
+- [Validation Integration](#validation-integration)
+- [Advanced Usage](#advanced-usage)
+- [API Reference](#api-reference)
+- [Example Responses](#example-responses)
+- [Examples](#examples)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## What is RFC 9457?
 
 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) (July 2023) defines a standard JSON format for HTTP API error responses, using the `application/problem+json` media type. It supersedes RFC 7807 and gives APIs a consistent, machine-readable way to communicate errors.
