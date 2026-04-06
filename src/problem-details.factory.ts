@@ -8,6 +8,7 @@ import {
   Rfc9457Request,
 } from './rfc9457.interfaces';
 import { PROBLEM_TYPE_METADATA_KEY, RFC9457_MODULE_OPTIONS } from './rfc9457.constants';
+import { Rfc9457ValidationException } from './validation/rfc9457-validation.exception';
 import { toSlug } from './utils/slug';
 
 @Injectable()
@@ -30,12 +31,16 @@ export class ProblemDetailsFactory {
     return this.normalize(result, exception, request);
   }
 
-  create(exception: unknown, request: Rfc9457Request): { status: number; body: ProblemDetail } {
+  create(
+    exception: unknown,
+    request: Rfc9457Request,
+    options?: { skipMapper?: boolean },
+  ): { status: number; body: ProblemDetail } {
     let result: ProblemDetail | null = null;
 
-    // Step 1: exceptionMapper callback — also runs in the filter before
-    // the HttpException gate, so this is a fallback for direct factory usage.
-    if (this.options.exceptionMapper) {
+    // Step 1: exceptionMapper callback.
+    // Skipped when the filter already ran the mapper (to avoid double invocation).
+    if (!options?.skipMapper && this.options.exceptionMapper) {
       const mapped = this.options.exceptionMapper(exception, request);
       if (mapped) {
         result = { ...mapped };
@@ -200,11 +205,10 @@ export class ProblemDetailsFactory {
   }
 
   private handleValidation(exception: unknown, request: Rfc9457Request): ProblemDetail | null {
-    // Tier 2: Rfc9457ValidationException (detected by class name to avoid hard
-    // runtime dependency on class-validator — the exception and factory helper
-    // are opt-in modules that consumers import separately)
-    if (this.isRfc9457ValidationException(exception)) {
-      const validationErrors = (exception as any).validationErrors as unknown[];
+    // Tier 2: Rfc9457ValidationException — safe to use instanceof since the class
+    // no longer imports class-validator at runtime (validationErrors is unknown[]).
+    if (exception instanceof Rfc9457ValidationException) {
+      const validationErrors = exception.validationErrors;
       return {
         status: 400,
         title: 'Bad Request',
@@ -232,15 +236,6 @@ export class ProblemDetailsFactory {
     }
 
     return null;
-  }
-
-  private isRfc9457ValidationException(exception: unknown): boolean {
-    return (
-      exception != null &&
-      typeof exception === 'object' &&
-      exception.constructor?.name === 'Rfc9457ValidationException' &&
-      'validationErrors' in exception
-    );
   }
 
   private isDefaultValidationException(exception: unknown): boolean {

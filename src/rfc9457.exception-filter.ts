@@ -49,7 +49,8 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     const ctx = host.switchToHttp();
     const request = ctx.getRequest();
     const response = ctx.getResponse();
-    const { status, body } = this.factory.create(exception, request);
+    // skipMapper: the filter already ran the mapper above and it returned null
+    const { status, body } = this.factory.create(exception, request, { skipMapper: true });
     const httpAdapter = this.adapterHost.httpAdapter;
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
     httpAdapter.reply(response, body, status);
