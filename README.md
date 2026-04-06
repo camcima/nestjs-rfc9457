@@ -7,6 +7,7 @@
 <br>
 
 [![CI](https://github.com/camcima/nestjs-rfc9457/actions/workflows/ci.yml/badge.svg)](https://github.com/camcima/nestjs-rfc9457/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/camcima/nestjs-rfc9457/actions/workflows/codeql.yml/badge.svg)](https://github.com/camcima/nestjs-rfc9457/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/camcima/nestjs-rfc9457/graph/badge.svg)](https://codecov.io/gh/camcima/nestjs-rfc9457)
 [![npm version](https://img.shields.io/npm/v/@camcima/nestjs-rfc9457)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
 [![npm downloads](https://img.shields.io/npm/dm/@camcima/nestjs-rfc9457.svg)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
@@ -32,6 +33,7 @@ NestJS library for [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem De
 - [API Reference](#api-reference)
 - [Example Responses](#example-responses)
 - [Examples](#examples)
+- [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -739,6 +741,41 @@ Internal error messages are never included in the response to avoid leaking sens
 ## Examples
 
 See the [nestjs-rfc9457-examples](https://github.com/camcima/nestjs-rfc9457-examples) repository for complete working NestJS applications demonstrating all features, including runnable demo scripts.
+
+---
+
+## Security
+
+### CI
+
+| Tool            | Purpose                                                  | Trigger                   |
+| --------------- | -------------------------------------------------------- | ------------------------- |
+| **CodeQL**      | Static analysis for security vulnerabilities             | Push, PR, weekly schedule |
+| **OSV-Scanner** | Dependency vulnerability scanning (production deps only) | Push, PR                  |
+| **Dependabot**  | Automated dependency and GitHub Actions updates          | Weekly PRs                |
+| **Codecov**     | Test coverage tracking                                   | Push, PR                  |
+
+### Local (via Lefthook)
+
+| Hook         | Tool                                             | Purpose                      |
+| ------------ | ------------------------------------------------ | ---------------------------- |
+| `pre-commit` | ESLint + Prettier                                | Code quality on staged files |
+| `pre-push`   | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanning before push  |
+
+Gitleaks must be [installed locally](https://github.com/gitleaks/gitleaks#installing). The pre-push hook will skip if Gitleaks is not available.
+
+### Manual local checks
+
+```bash
+# Dependency audit (production only)
+npm run audit:deps
+
+# Secret scanning
+npm run audit:secrets
+
+# Full npm audit (all dependencies)
+npm audit
+```
 
 ---
 

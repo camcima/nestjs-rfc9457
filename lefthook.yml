@@ -12,3 +12,10 @@ commit-msg:
   commands:
     commitlint:
       run: npx commitlint --edit {1}
+
+pre-push:
+  commands:
+    gitleaks:
+      run: gitleaks git --no-banner --redact -v
+      skip:
+        - ref: main
