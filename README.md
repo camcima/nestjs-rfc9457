@@ -719,6 +719,12 @@ Internal error messages are never included in the response to avoid leaking sens
 
 ---
 
+## Examples
+
+See the [nestjs-rfc9457-examples](https://github.com/camcima/nestjs-rfc9457-examples) repository for complete working NestJS applications demonstrating all features, including runnable demo scripts.
+
+---
+
 ## Contributing
 
 Contributions are welcome. Please open an issue before submitting a pull request for significant changes.
