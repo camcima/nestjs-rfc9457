@@ -6,6 +6,16 @@
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./swagger": {
+      "types": "./dist/swagger/index.d.ts",
+      "default": "./dist/swagger/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -30,10 +40,14 @@
     "@nestjs/common": "^10.0.0 || ^11.0.0",
     "@nestjs/core": "^10.0.0 || ^11.0.0",
     "class-validator": "^0.14.0",
-    "reflect-metadata": "^0.1.13 || ^0.2.0"
+    "reflect-metadata": "^0.1.13 || ^0.2.0",
+    "@nestjs/swagger": "^7.0.0 || ^8.0.0 || ^11.0.0"
   },
   "peerDependenciesMeta": {
     "class-validator": {
+      "optional": true
+    },
+    "@nestjs/swagger": {
       "optional": true
     }
   },
@@ -42,6 +56,7 @@
     "@commitlint/config-conventional": "^20.5.0",
     "@nestjs/common": "^11.1.18",
     "@nestjs/core": "^11.1.18",
+    "@nestjs/swagger": "^11.1.18",
     "@nestjs/platform-express": "^11.1.18",
     "@nestjs/platform-fastify": "^11.1.18",
     "@nestjs/testing": "^11.1.18",

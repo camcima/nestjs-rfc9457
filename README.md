@@ -28,6 +28,7 @@ NestJS library for [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem De
 - [Async Configuration](#async-configuration)
 - [Custom Exception Types](#custom-exception-types)
 - [Validation Integration](#validation-integration)
+- [Swagger / OpenAPI Integration](#swagger--openapi-integration)
 - [Advanced Usage](#advanced-usage)
 - [API Reference](#api-reference)
 - [Example Responses](#example-responses)
@@ -77,8 +78,9 @@ Extension members (arbitrary key-value pairs) are allowed for problem-type-speci
 - Optional catch-all mode for non-`HttpException` throwables (produces 500 Problem Details)
 - Custom `exceptionMapper` callback for full control over any exception
 - `ProblemDetailsFactory` is injectable — use it directly in GraphQL, microservices, or custom filters
+- Optional `@nestjs/swagger` integration: `ProblemDetailDto` and `ValidationProblemDetailDto` for OpenAPI documentation, plus a `applyProblemDetailResponses()` helper that auto-applies `@ApiResponse` decorators to all controllers under `application/problem+json`
 - Works with both Express and Fastify adapters
-- Zero runtime dependencies; `class-validator` is an optional peer dependency
+- Zero runtime dependencies; `class-validator` and `@nestjs/swagger` are optional peer dependencies
 
 ---
 
@@ -98,12 +100,13 @@ pnpm add @camcima/nestjs-rfc9457
 
 ### Peer dependencies
 
-| Package            | Version                | Required                             |
-| ------------------ | ---------------------- | ------------------------------------ |
-| `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0` | Yes                                  |
-| `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0` | Yes                                  |
-| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`  | Yes                                  |
-| `class-validator`  | `^0.14.0`              | No (optional, for Tier 2 validation) |
+| Package            | Version                           | Required                               |
+| ------------------ | --------------------------------- | -------------------------------------- |
+| `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
+| `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
+| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`             | Yes                                    |
+| `class-validator`  | `^0.14.0`                         | No (optional, for Tier 2 validation)   |
+| `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0` | No (optional, for OpenAPI integration) |
 
 ---
 
@@ -540,6 +543,156 @@ Nested validation errors are preserved as `children` arrays matching the `class-
 
 ---
 
+## Swagger / OpenAPI Integration
+
+The library ships optional Swagger support under a separate import path so it does not require `@nestjs/swagger` as a mandatory dependency. Install `@nestjs/swagger` as usual if you have not already:
+
+```bash
+npm install @nestjs/swagger
+```
+
+All Swagger-related exports are imported from the `/swagger` subpath:
+
+```typescript
+import {
+  ProblemDetailDto,
+  ValidationProblemDetailDto,
+  ValidationErrorDto,
+  applyProblemDetailResponses,
+} from '@camcima/nestjs-rfc9457/swagger';
+```
+
+### Auto-applying error schemas to all controllers
+
+The `applyProblemDetailResponses()` helper uses NestJS's `DiscoveryService` to programmatically attach `@ApiResponse` decorators to every controller in your application. Responses are documented under `application/problem+json` as required by RFC 9457.
+
+**Step 1** — Import `DiscoveryModule` in your app module:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { DiscoveryModule } from '@nestjs/core';
+import { Rfc9457Module } from '@camcima/nestjs-rfc9457';
+
+@Module({
+  imports: [DiscoveryModule, Rfc9457Module.forRoot()],
+})
+export class AppModule {}
+```
+
+**Step 2** — Call the helper inside the lazy document factory passed to `SwaggerModule.setup()`:
+
+```typescript
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { applyProblemDetailResponses } from '@camcima/nestjs-rfc9457/swagger';
+
+const config = new DocumentBuilder().setTitle('My API').build();
+
+SwaggerModule.setup('/api', app, () => {
+  applyProblemDetailResponses(app);
+  return SwaggerModule.createDocument(app, config);
+});
+```
+
+By default, this documents `400` and `500` responses on every route using `ProblemDetailDto`. The generated OpenAPI spec will show `application/problem+json` as the response media type with the correct schema.
+
+### Options
+
+`applyProblemDetailResponses` accepts an optional second argument:
+
+```typescript
+interface ApplyProblemDetailResponsesOptions {
+  /** HTTP status codes to document. Default: [400, 500]. */
+  statuses?: number[];
+
+  /**
+   * Statuses that use ValidationProblemDetailDto (with the errors array)
+   * instead of the base ProblemDetailDto. Default: [].
+   */
+  validationStatuses?: number[];
+}
+```
+
+#### Documenting additional statuses
+
+```typescript
+applyProblemDetailResponses(app, {
+  statuses: [400, 401, 403, 404, 500],
+});
+```
+
+#### Documenting Tier 2 structured validation errors
+
+If you use `Rfc9457ValidationException` (Tier 2) for validation, you can tell the helper to use `ValidationProblemDetailDto` for specific statuses. This DTO includes the `errors` array of structured `ValidationErrorDto` objects:
+
+```typescript
+applyProblemDetailResponses(app, {
+  statuses: [400, 500],
+  validationStatuses: [400],
+});
+```
+
+This documents 400 responses with the `ValidationProblemDetailDto` schema (which includes `errors: ValidationErrorDto[]`) and 500 responses with the base `ProblemDetailDto`.
+
+### Using DTOs manually for per-route documentation
+
+For finer control, use the DTO classes directly with `@ApiResponse()` on individual routes:
+
+```typescript
+import { ApiResponse } from '@nestjs/swagger';
+import { ProblemDetailDto, ValidationProblemDetailDto } from '@camcima/nestjs-rfc9457/swagger';
+
+@Get(':id')
+@ApiResponse({
+  status: 404,
+  description: 'Not Found',
+  content: {
+    'application/problem+json': {
+      schema: { $ref: '#/components/schemas/ProblemDetailDto' },
+    },
+  },
+})
+findOne(@Param('id') id: string) {
+  // ...
+}
+```
+
+Or more concisely using the `type` shorthand (documents as `application/json` instead of `application/problem+json`):
+
+```typescript
+@ApiResponse({ status: 404, type: ProblemDetailDto })
+```
+
+### Extending DTOs for custom extension members
+
+If your API returns extension members (additional fields beyond the five standard RFC 9457 members), extend `ProblemDetailDto` to document them:
+
+```typescript
+import { ApiProperty } from '@nestjs/swagger';
+import { ProblemDetailDto } from '@camcima/nestjs-rfc9457/swagger';
+
+export class InsufficientFundsProblemDto extends ProblemDetailDto {
+  @ApiProperty({ example: 50 })
+  balance!: number;
+
+  @ApiProperty({ example: 100 })
+  required!: number;
+}
+```
+
+### Available DTOs
+
+| DTO                          | Description                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `ProblemDetailDto`           | The five standard RFC 9457 fields (`type`, `title`, `status`, `detail`, `instance`)  |
+| `ValidationProblemDetailDto` | Extends `ProblemDetailDto` with `errors: ValidationErrorDto[]` for Tier 2 validation |
+| `ValidationErrorDto`         | Structured validation error (`property`, `constraints?`, `children?`)                |
+
+### Design note
+
+The auto-apply helper uses `ProblemDetailDto` for all statuses by default. This is intentional: a single HTTP status (e.g. 400) can produce different response shapes at runtime — a plain problem detail for non-validation errors, `errors: string[]` for Tier 1 validation, or `errors: ValidationErrorDto[]` for Tier 2 validation. The base DTO is the common denominator that is always correct. Use `validationStatuses` to opt in to the more specific schema when your application uses Tier 2 validation exclusively.
+
+---
+
 ## Advanced Usage
 
 ### Using `ProblemDetailsFactory` directly
@@ -623,6 +776,16 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
 | `createRfc9457ValidationPipeExceptionFactory` | Function         | Returns an `exceptionFactory` for `ValidationPipe` to enable Tier 2 errors  |
 | `RFC9457_MODULE_OPTIONS`                      | Symbol           | DI token for the module options                                             |
 | `PROBLEM_CONTENT_TYPE`                        | Constant         | `'application/problem+json'`                                                |
+
+**Swagger subpath** (`@camcima/nestjs-rfc9457/swagger`):
+
+| Export                               | Kind      | Description                                                                           |
+| ------------------------------------ | --------- | ------------------------------------------------------------------------------------- |
+| `ProblemDetailDto`                   | Class     | Swagger DTO for the five standard RFC 9457 fields                                     |
+| `ValidationProblemDetailDto`         | Class     | Extends `ProblemDetailDto` with `errors: ValidationErrorDto[]`                        |
+| `ValidationErrorDto`                 | Class     | Swagger DTO for a structured validation error (`property`, `constraints`, `children`) |
+| `applyProblemDetailResponses`        | Function  | Auto-applies `@ApiResponse` decorators to all controllers via `DiscoveryService`      |
+| `ApplyProblemDetailResponsesOptions` | Interface | Options for `applyProblemDetailResponses`                                             |
 
 ---
 
