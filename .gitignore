@@ -8,3 +8,6 @@ coverage/
 *.swp
 *.swo
 .DS_Store
+.claude
+.codex
+docs/superpowers/
