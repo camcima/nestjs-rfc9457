@@ -168,6 +168,8 @@ A thin shell that catches exceptions and delegates to the factory.
 
 Class decorator for user-defined exception classes. Stores a **template** (not the final object) via `Reflect.defineMetadata`.
 
+**`ProblemTypeMetadata` interface**: All fields are optional. The factory fills missing values from the exception and request context at runtime. When `status` is omitted, the factory infers it from the exception (`HttpException.getStatus()`) or defaults to `500` in catch-all mode.
+
 ```typescript
 @ProblemType({
   type: 'https://api.example.com/problems/insufficient-funds',
@@ -482,6 +484,7 @@ nestjs-rfc9457/
 - `tsconfig.build.json` excludes `test/`
 - CJS output only for v1 (standard for NestJS ecosystem; ESM can be added later with proper consumer testing to avoid the dual package hazard)
 - `"types"` points to `dist/index.d.ts`
+- `engines.node`: `">=18"` in `package.json` (matches CI matrix, documents supported range for consumers)
 - Publish scope: `@camcima/nestjs-rfc9457`
 - HTTP status phrases sourced from Node's built-in `http.STATUS_CODES` (no hand-maintained table)
 
@@ -505,14 +508,13 @@ Single workflow (`.github/workflows/ci.yml`) triggered on push to `main` and all
 
 **Jobs**:
 
-1. **lint** — runs ESLint on the entire codebase
-2. **format** — runs Prettier check (`--check` mode, no writes)
-3. **test** — runs the full test suite (unit + E2E)
+1. **quality** — runs ESLint and Prettier check (`--check` mode) in a single job
+2. **test** — runs the full test suite (unit + E2E)
    - Matrix: Node 18, 20, 22
    - Installs dependencies, builds, then runs `jest --coverage`
-4. **build** — verifies `tsc` compiles cleanly with `tsconfig.build.json`
+3. **build** — verifies `tsc` compiles cleanly with `tsconfig.build.json`
 
-All jobs run in parallel. PRs require all four to pass.
+All jobs run in parallel. PRs require all three to pass.
 
 ### Documentation (README.md)
 
