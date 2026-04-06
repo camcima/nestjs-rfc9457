@@ -22,6 +22,7 @@
   "engines": {
     "node": ">=18"
   },
+  "packageManager": "pnpm@10.17.0",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint 'src/**/*.ts' 'test/**/*.ts'",
@@ -31,9 +32,9 @@
     "test:unit": "jest --testPathPattern=test/unit",
     "test:e2e": "jest --testPathPattern=test/e2e",
     "test:cov": "jest --coverage",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "pnpm run build",
     "release": "release-it",
-    "audit:deps": "npm audit --omit=dev",
+    "audit:deps": "pnpm audit --prod",
     "audit:secrets": "gitleaks git --no-banner --redact -v"
   },
   "peerDependencies": {

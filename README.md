@@ -930,13 +930,13 @@ Gitleaks must be [installed locally](https://github.com/gitleaks/gitleaks#instal
 
 ```bash
 # Dependency audit (production only)
-npm run audit:deps
+pnpm run audit:deps
 
 # Secret scanning
-npm run audit:secrets
+pnpm run audit:secrets
 
-# Full npm audit (all dependencies)
-npm audit
+# Full pnpm audit (all dependencies)
+pnpm audit
 ```
 
 ---
@@ -951,19 +951,19 @@ git clone https://github.com/camcima/nestjs-rfc9457.git
 cd nestjs-rfc9457
 
 # Install dependencies
-npm install
+pnpm install
 
 # Run unit tests
-npm run test:unit
+pnpm run test:unit
 
 # Run e2e tests
-npm run test:e2e
+pnpm run test:e2e
 
 # Run all tests with coverage
-npm run test:cov
+pnpm run test:cov
 
 # Build
-npm run build
+pnpm run build
 ```
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/) enforced by commitlint, and [Lefthook](https://github.com/evilmartians/lefthook) for pre-commit hooks (lint + format on staged files).
