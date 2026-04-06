@@ -9,7 +9,7 @@ module.exports = {
   extends: ['plugin:@typescript-eslint/recommended', 'plugin:prettier/recommended'],
   root: true,
   env: { node: true, jest: true },
-  ignorePatterns: ['.eslintrc.js', 'dist', 'coverage', 'commitlint.config.js'],
+  ignorePatterns: ['.eslintrc.js', 'dist', 'coverage', 'commitlint.config.js', 'jest.config.ts'],
   rules: {
     '@typescript-eslint/no-explicit-any': 'off',
     '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],

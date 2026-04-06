@@ -33,6 +33,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:cov
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == 22
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: coverage
+          fail_ci_if_error: true
 
   build:
     runs-on: ubuntu-latest
