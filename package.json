@@ -6,8 +6,12 @@
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
-  "engines": { "node": ">=18" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint 'src/**/*.ts' 'test/**/*.ts'",
@@ -23,11 +27,13 @@
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
     "@nestjs/core": "^10.0.0 || ^11.0.0",
-    "reflect-metadata": "^0.1.13 || ^0.2.0",
-    "class-validator": "^0.14.0"
+    "class-validator": "^0.14.0",
+    "reflect-metadata": "^0.1.13 || ^0.2.0"
   },
   "peerDependenciesMeta": {
-    "class-validator": { "optional": true }
+    "class-validator": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@commitlint/cli": "^19.0.0",
@@ -56,11 +62,19 @@
     "rxjs": "^7.0.0",
     "supertest": "^7.0.0",
     "ts-jest": "^29.0.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.0.0"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/camcima/nestjs-rfc9457.git"
   },
-  "keywords": ["nestjs", "rfc9457", "rfc7807", "problem-details", "error-handling", "api"]
+  "keywords": [
+    "nestjs",
+    "rfc9457",
+    "rfc7807",
+    "problem-details",
+    "error-handling",
+    "api"
+  ]
 }
