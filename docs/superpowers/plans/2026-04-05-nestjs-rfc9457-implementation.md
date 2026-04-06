@@ -440,16 +440,16 @@ export interface ProblemDetail {
  * All fields are optional — the factory fills missing values from the
  * exception and request context at runtime.
  *
- * This is intentionally separate from ProblemDetail: it defines a
- * problem type template (the five core fields only), not a final
- * response with arbitrary extension members.
+ * Restricted to problem TYPE identity fields only (type, title, status).
+ * Occurrence-specific fields (detail, instance) are always derived at
+ * runtime by the factory from the exception and request context.
+ * This keeps decorator metadata focused on "what kind of problem"
+ * rather than "what happened this time."
  */
 export interface ProblemTypeMetadata {
   type?: string;
   title?: string;
   status?: number;
-  detail?: string;
-  instance?: string;
 }
 
 export type InstanceStrategy =
@@ -566,11 +566,16 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Write implementation**
 
 ```typescript
+/**
+ * Converts an HTTP status phrase to a URL-safe kebab-case slug.
+ * Scoped to ASCII HTTP reason phrases (e.g., "Not Found" -> "not-found").
+ * Not intended as a general-purpose slugifier for arbitrary Unicode input.
+ */
 export function toSlug(phrase: string): string {
   return phrase
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')  // strip punctuation
+    .replace(/[^a-z0-9\s-]/g, '')  // strip punctuation (ASCII-only scope)
     .replace(/\s+/g, '-')           // spaces to hyphens
     .replace(/-+/g, '-')            // collapse multiple hyphens
     .replace(/^-|-$/g, '');          // trim leading/trailing hyphens
@@ -926,7 +931,7 @@ import { toSlug } from './utils/slug';
 @Injectable()
 export class ProblemDetailsFactory {
   constructor(
-    @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions,
+    @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions = {},
   ) {}
 
   create(exception: unknown, request: Rfc9457Request): { status: number; body: ProblemDetail } {
@@ -947,8 +952,11 @@ export class ProblemDetailsFactory {
         );
         if (metadata) {
           result = { ...metadata };
-          if (result.detail === undefined) {
-            result.detail = this.extractDetail(exception);
+          // Metadata only carries type identity (type, title, status).
+          // detail is always derived from the exception at runtime.
+          const detail = this.extractDetail(exception);
+          if (detail !== undefined) {
+            result.detail = detail;
           }
         }
       }
@@ -972,25 +980,17 @@ export class ProblemDetailsFactory {
       }
     }
 
-    // Step 5: Unknown exception fallback (catch-all mode only)
-    // This path should only be reachable when catchAllExceptions is true.
-    // The filter prevents non-HttpException from reaching the factory otherwise,
-    // but the factory enforces this as a defensive check.
+    // Step 5: Unknown exception fallback
+    // Internal safety net: the filter is responsible for routing only appropriate
+    // exceptions to the factory. If we reach here, it means no resolution step
+    // matched. Produce a generic 500 regardless of catchAllExceptions — this is
+    // defensive, not part of the public contract.
     if (!result) {
-      if (!this.options.catchAllExceptions) {
-        // Should not happen in normal flow — the filter guards this.
-        // Defensive fallback: produce a generic 500 anyway.
-        result = {
-          status: 500,
-          title: 'Internal Server Error',
-        };
-      } else {
-        result = {
-          status: 500,
-          title: 'Internal Server Error',
-          // detail intentionally omitted — do not leak internal error info
-        };
-      }
+      result = {
+        status: 500,
+        title: 'Internal Server Error',
+        // detail intentionally omitted — do not leak internal error info
+      };
     }
 
     // Resolve definitive transport status

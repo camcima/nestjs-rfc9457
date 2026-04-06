@@ -178,7 +178,7 @@ A thin shell that catches exceptions and delegates to the factory.
 
 Class decorator for user-defined exception classes. Stores a **template** (not the final object) via `Reflect.defineMetadata`.
 
-**`ProblemTypeMetadata` interface**: All fields are optional. The factory fills missing values from the exception and request context at runtime. When `status` is omitted, the factory infers it from the exception (`HttpException.getStatus()`) or defaults to `500` in catch-all mode.
+**`ProblemTypeMetadata` interface**: Contains only problem type identity fields (`type`, `title`, `status`), all optional. Occurrence-specific fields (`detail`, `instance`) are always derived at runtime by the factory from the exception and request context — they are not part of the decorator template. When `status` is omitted, the factory infers it from the exception (`HttpException.getStatus()`) or defaults to `500` in catch-all mode.
 
 ```typescript
 @ProblemType({
