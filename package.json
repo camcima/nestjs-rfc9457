@@ -62,7 +62,7 @@
     "@nestjs/platform-fastify": "^11.1.18",
     "@nestjs/testing": "^11.1.18",
     "@types/jest": "^30.0.0",
-    "@types/node": "^22.19.17",
+    "@types/node": "^25.6.0",
     "@types/supertest": "^7.2.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
