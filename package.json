@@ -22,7 +22,7 @@
   "engines": {
     "node": ">=18"
   },
-  "packageManager": "pnpm@10.17.0",
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint 'src/**/*.ts' 'test/**/*.ts'",
