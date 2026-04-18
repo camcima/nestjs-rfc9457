@@ -40,9 +40,9 @@
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",
     "@nestjs/core": "^10.0.0 || ^11.0.0",
+    "@nestjs/swagger": "^7.0.0 || ^8.0.0 || ^11.0.0",
     "class-validator": "^0.14.0",
-    "reflect-metadata": "^0.1.13 || ^0.2.0",
-    "@nestjs/swagger": "^7.0.0 || ^8.0.0 || ^11.0.0"
+    "reflect-metadata": "^0.1.13 || ^0.2.0"
   },
   "peerDependenciesMeta": {
     "class-validator": {
@@ -55,14 +55,14 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
-    "@nestjs/common": "^11.1.18",
-    "@nestjs/core": "^11.1.18",
-    "@nestjs/swagger": "^11.1.18",
-    "@nestjs/platform-express": "^11.1.18",
-    "@nestjs/platform-fastify": "^11.1.18",
-    "@nestjs/testing": "^11.1.18",
+    "@nestjs/common": "^11.1.19",
+    "@nestjs/core": "^11.1.19",
+    "@nestjs/platform-express": "^11.1.19",
+    "@nestjs/platform-fastify": "^11.1.19",
+    "@nestjs/swagger": "^11.2.7",
+    "@nestjs/testing": "^11.1.19",
     "@types/jest": "^30.0.0",
-    "@types/node": "^22.19.17",
+    "@types/node": "^25.6.0",
     "@types/supertest": "^7.2.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
@@ -73,7 +73,7 @@
     "eslint-plugin-prettier": "^5.0.0",
     "jest": "^30.3.0",
     "lefthook": "^1.0.0",
-    "prettier": "^3.0.0",
+    "prettier": "^3.8.3",
     "reflect-metadata": "^0.2.0",
     "release-it": "^18.0.0",
     "rxjs": "^7.0.0",
