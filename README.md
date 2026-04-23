@@ -77,6 +77,7 @@ Extension members (arbitrary key-value pairs) are allowed for problem-type-speci
 - Four `instance` strategies: `'request-uri'`, `'uuid'`, `'none'`, or a custom callback
 - Optional catch-all mode for non-`HttpException` throwables (produces 500 Problem Details)
 - Custom `exceptionMapper` callback for full control over any exception
+- Default `error`-level logging of unhandled exceptions when `catchAllExceptions: true` (override via `onUnhandled` callback)
 - `ProblemDetailsFactory` is injectable — use it directly in GraphQL, microservices, or custom filters
 - Optional `@nestjs/swagger` integration: `ProblemDetailDto` and `ValidationProblemDetailDto` for OpenAPI documentation, plus a `applyProblemDetailResponses()` helper that auto-applies `@ApiResponse` decorators to all controllers under `application/problem+json`
 - Works with both Express and Fastify adapters
@@ -260,6 +261,8 @@ When `false` (default), exceptions that are not `HttpException` instances are pa
 Rfc9457Module.forRoot({ catchAllExceptions: true });
 ```
 
+**Observability:** when this branch fires (a non-`HttpException` reaches the filter and no `exceptionMapper` claims it), the library logs the exception at `error` level via NestJS's built-in `Logger` (context `Rfc9457ExceptionFilter`) before sending the generic 500. This keeps unexpected throwables visible in server logs even though the response body is intentionally bland. To redirect or replace this logging, use the [`onUnhandled`](#onunhandled) callback described below.
+
 ### `exceptionMapper`
 
 **Type**: `(exception: unknown, request: Rfc9457Request) => ProblemDetail | null`
@@ -283,6 +286,28 @@ Rfc9457Module.forRoot({
 ```
 
 If the returned `ProblemDetail` omits `status`, the factory falls back to `exception.getStatus()` (if it is an `HttpException`) or `500`.
+
+### `onUnhandled`
+
+**Type**: `(exception: unknown, request: Rfc9457Request) => void` | **Default**: built-in `Logger.error(...)` (context `Rfc9457ExceptionFilter`)
+
+Called when a non-`HttpException` reaches the catch-all branch (i.e. `catchAllExceptions: true` AND the `exceptionMapper` returned `null`). Use this to send unhandled exceptions to a structured sink (Sentry, Datadog, a custom pino child logger) or to suppress the default log entirely.
+
+```typescript
+Rfc9457Module.forRoot({
+  catchAllExceptions: true,
+  onUnhandled: (exception, request) => {
+    // Route to Sentry, Datadog, etc.
+    sentry.captureException(exception, {
+      tags: { method: request.method, url: request.url },
+    });
+  },
+});
+```
+
+**The filter still sends the generic 500 Problem Details response after invoking `onUnhandled`.** This callback exists purely for observability — it never changes the HTTP response.
+
+When `onUnhandled` is **not** provided, the library calls `Logger.error(...)` with either the exception's `stack` string or a `{ exception }` structured context (for non-`Error` values). The log context is `Rfc9457ExceptionFilter` so it can be filtered or silenced via NestJS's logger configuration.
 
 ### `validationExceptionMapper`
 

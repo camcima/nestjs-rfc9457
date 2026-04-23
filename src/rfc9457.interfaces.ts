@@ -49,6 +49,19 @@ export interface Rfc9457ModuleOptions {
   catchAllExceptions?: boolean;
   exceptionMapper?: (exception: unknown, request: Rfc9457Request) => ProblemDetail | null;
   validationExceptionMapper?: (messages: string[], request: Rfc9457Request) => ProblemDetail;
+  /**
+   * Called when a non-`HttpException` reaches the filter's catch-all branch
+   * (i.e. `catchAllExceptions: true` AND the `exceptionMapper` returned `null`).
+   *
+   * If not provided, the filter logs the exception via NestJS's built-in
+   * `Logger` (context `Rfc9457ExceptionFilter`) at error level. Provide this
+   * callback to redirect logging elsewhere (custom metric, structured pino
+   * event, sink-specific adapter) or to suppress the default log entirely.
+   *
+   * The filter **still** sends the generic problem-details response after
+   * invoking this callback — it exists purely for observability.
+   */
+  onUnhandled?: (exception: unknown, request: Rfc9457Request) => void;
 }
 
 export interface Rfc9457OptionsFactory {

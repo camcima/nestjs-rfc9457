@@ -1,4 +1,4 @@
-import { ArgumentsHost, NotFoundException } from '@nestjs/common';
+import { ArgumentsHost, Logger, NotFoundException } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { Rfc9457ExceptionFilter } from '../../src/rfc9457.exception-filter';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
@@ -148,5 +148,91 @@ describe('Rfc9457ExceptionFilter', () => {
       // Expected: BaseExceptionFilter.catch fails in test environment
     }
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+  });
+
+  describe('unhandled exception observability', () => {
+    let loggerErrorSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      loggerErrorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerErrorSpy.mockRestore();
+    });
+
+    it('logs the stack trace when a non-HttpException falls through with catchAllExceptions', () => {
+      const { filter, mockHost } = createMocks({ catchAllExceptions: true });
+      const err = new TypeError('kaboom');
+      filter.catch(err, mockHost);
+      expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
+      const [firstArg] = loggerErrorSpy.mock.calls[0];
+      expect(typeof firstArg).toBe('string');
+      expect(firstArg).toContain('TypeError: kaboom');
+    });
+
+    it('logs the bare message when an Error has no stack', () => {
+      const { filter, mockHost } = createMocks({ catchAllExceptions: true });
+      const err = new Error('no-stack');
+      err.stack = undefined;
+      filter.catch(err, mockHost);
+      expect(loggerErrorSpy).toHaveBeenCalledWith('no-stack', 'Unhandled non-HTTP exception');
+    });
+
+    it('logs non-Error thrown values via structured context', () => {
+      const { filter, mockHost } = createMocks({ catchAllExceptions: true });
+      filter.catch({ oddity: true, value: 42 }, mockHost);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        { exception: { oddity: true, value: 42 } },
+        'Unhandled non-HTTP exception (non-Error value thrown)',
+      );
+    });
+
+    it('does NOT log when an HttpException falls through (those are expected)', () => {
+      const { filter, mockHost } = createMocks({ catchAllExceptions: true });
+      filter.catch(new NotFoundException('nope'), mockHost);
+      expect(loggerErrorSpy).not.toHaveBeenCalled();
+    });
+
+    it('does NOT log when the exceptionMapper successfully maps the exception', () => {
+      class DbDown extends Error {}
+      const { filter, mockHost } = createMocks({
+        catchAllExceptions: true,
+        exceptionMapper: (ex) =>
+          ex instanceof DbDown
+            ? { type: 'https://example.com/db', status: 503, title: 'DB down' }
+            : null,
+      });
+      filter.catch(new DbDown(), mockHost);
+      expect(loggerErrorSpy).not.toHaveBeenCalled();
+    });
+
+    it('defers to onUnhandled callback when provided (no default log)', () => {
+      const onUnhandled = jest.fn();
+      const { filter, mockHost, mockRequest } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled,
+      });
+      const err = new TypeError('custom sink');
+      filter.catch(err, mockHost);
+
+      expect(onUnhandled).toHaveBeenCalledTimes(1);
+      expect(onUnhandled).toHaveBeenCalledWith(err, mockRequest);
+      expect(loggerErrorSpy).not.toHaveBeenCalled();
+    });
+
+    it('onUnhandled does not prevent the generic problem-details response', () => {
+      const onUnhandled = jest.fn();
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled,
+      });
+      filter.catch(new TypeError('still renders'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 500, title: 'Internal Server Error' }),
+        500,
+      );
+    });
   });
 });
