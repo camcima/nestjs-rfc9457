@@ -161,30 +161,34 @@ describe('Rfc9457ExceptionFilter', () => {
       loggerErrorSpy.mockRestore();
     });
 
-    it('logs the stack trace when a non-HttpException falls through with catchAllExceptions', () => {
+    it('logs message with stack when a non-HttpException falls through with catchAllExceptions', () => {
       const { filter, mockHost } = createMocks({ catchAllExceptions: true });
       const err = new TypeError('kaboom');
       filter.catch(err, mockHost);
       expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
-      const [firstArg] = loggerErrorSpy.mock.calls[0];
-      expect(typeof firstArg).toBe('string');
-      expect(firstArg).toContain('TypeError: kaboom');
+      const [message, stack] = loggerErrorSpy.mock.calls[0];
+      expect(message).toBe('Unhandled non-HTTP exception: kaboom');
+      expect(typeof stack).toBe('string');
+      expect(stack).toContain('TypeError: kaboom');
     });
 
-    it('logs the bare message when an Error has no stack', () => {
+    it('passes undefined stack when an Error has no stack', () => {
       const { filter, mockHost } = createMocks({ catchAllExceptions: true });
       const err = new Error('no-stack');
       err.stack = undefined;
       filter.catch(err, mockHost);
-      expect(loggerErrorSpy).toHaveBeenCalledWith('no-stack', 'Unhandled non-HTTP exception');
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        'Unhandled non-HTTP exception: no-stack',
+        undefined,
+      );
     });
 
-    it('logs non-Error thrown values via structured context', () => {
+    it('logs non-Error thrown values with the raw value as a second argument', () => {
       const { filter, mockHost } = createMocks({ catchAllExceptions: true });
       filter.catch({ oddity: true, value: 42 }, mockHost);
       expect(loggerErrorSpy).toHaveBeenCalledWith(
-        { exception: { oddity: true, value: 42 } },
         'Unhandled non-HTTP exception (non-Error value thrown)',
+        { oddity: true, value: 42 },
       );
     });
 

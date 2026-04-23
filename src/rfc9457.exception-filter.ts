@@ -63,9 +63,11 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
         const ctx = host.switchToHttp();
         this.options.onUnhandled(exception, ctx.getRequest());
       } else if (exception instanceof Error) {
-        this.logger.error(exception.stack ?? exception.message, 'Unhandled non-HTTP exception');
+        // Pass stack as 2nd arg so NestJS routes it through its stack-trace
+        // slot while preserving the constructor's context (`Rfc9457ExceptionFilter`).
+        this.logger.error(`Unhandled non-HTTP exception: ${exception.message}`, exception.stack);
       } else {
-        this.logger.error({ exception }, 'Unhandled non-HTTP exception (non-Error value thrown)');
+        this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', exception);
       }
     }
 
