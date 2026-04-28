@@ -1,0 +1,55 @@
+{
+  "skill_name": "configure-nestjs-rfc9457",
+  "evals": [
+    {
+      "id": 1,
+      "name": "basic-adoption",
+      "prompt": "I want to standardize all error responses in my NestJS API to RFC 9457 problem details. Set it up please.",
+      "input_scaffold": "inputs/basic-app",
+      "assertions": [
+        "package.json adds @camcima/nestjs-rfc9457 to dependencies",
+        "AppModule imports Rfc9457Module from @camcima/nestjs-rfc9457",
+        "Rfc9457Module.forRoot() is used (not forRootAsync — no env-driven config requested)",
+        "No typeBaseUri configured (user did not specify a base URI)",
+        "No catchAllExceptions: true (user did not request catching non-HttpException throwables)",
+        "No instanceStrategy other than default (user did not request traceability)",
+        "Does NOT manually register Rfc9457ExceptionFilter via APP_FILTER or app.useGlobalFilters",
+        "Does NOT install or import class-validator / class-transformer (not needed for this scope)",
+        "Does NOT install or import @nestjs/swagger (not requested)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "tier2-validation",
+      "prompt": "My NestJS app already uses class-validator DTOs and a global ValidationPipe with whitelist, forbidNonWhitelisted, and transform turned on. Validation errors come out as a flat array of strings. I want them structured with field path, constraints, and nested children for cases where I have @ValidateNested() — basically the rich format. Switch us over to RFC 9457 problem details and give us those structured errors.",
+      "input_scaffold": "inputs/validation-app",
+      "assertions": [
+        "package.json adds @camcima/nestjs-rfc9457 to dependencies",
+        "AppModule imports Rfc9457Module from @camcima/nestjs-rfc9457",
+        "main.ts uses createRfc9457ValidationPipeExceptionFactory() as the ValidationPipe exceptionFactory",
+        "main.ts preserves whitelist: true on the ValidationPipe options",
+        "main.ts preserves forbidNonWhitelisted: true on the ValidationPipe options",
+        "main.ts preserves transform: true on the ValidationPipe options",
+        "main.ts does NOT register a second ValidationPipe — the original is modified in place",
+        "Does NOT use validationExceptionMapper (Tier 1 path) — Tier 2 was the explicit ask"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "swagger-and-problemtype",
+      "prompt": "We use @nestjs/swagger and we have two domain exceptions in src/exceptions/ — InsufficientFundsException and OrderNotFoundException. Wire RFC 9457 problem details with `https://api.example.com/problems` as the type base URI. Make those two exceptions produce stable problem-type URIs (insufficient-funds and order-not-found). And document the error responses in the OpenAPI spec under application/problem+json so frontend devs see the right shape.",
+      "input_scaffold": "inputs/swagger-app",
+      "assertions": [
+        "package.json adds @camcima/nestjs-rfc9457 to dependencies",
+        "Rfc9457Module configured with typeBaseUri: 'https://api.example.com/problems'",
+        "AppModule imports DiscoveryModule from @nestjs/core",
+        "main.ts calls applyProblemDetailResponses(app) inside a lazy SwaggerModule.setup factory",
+        "applyProblemDetailResponses is imported from @camcima/nestjs-rfc9457/swagger",
+        "InsufficientFundsException has @ProblemType() with type ending in /insufficient-funds",
+        "OrderNotFoundException has @ProblemType() with type ending in /order-not-found",
+        "@ProblemType is imported from @camcima/nestjs-rfc9457 (not /swagger)",
+        "Each @ProblemType() also sets a title and a status (422 and 404 respectively)"
+      ]
+    }
+  ]
+}

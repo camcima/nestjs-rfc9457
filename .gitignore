@@ -12,3 +12,4 @@ coverage/
 .claude
 .codex
 docs/superpowers/
+skills/*-workspace/

@@ -23,6 +23,7 @@ NestJS library for [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem De
 - [What is RFC 9457?](#what-is-rfc-9457)
 - [Features](#features)
 - [Installation](#installation)
+- [Coding Agent Skill](#coding-agent-skill)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Async Configuration](#async-configuration)
@@ -108,6 +109,36 @@ pnpm add @camcima/nestjs-rfc9457
 | `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`             | Yes                                    |
 | `class-validator`  | `^0.14.0`                         | No (optional, for Tier 2 validation)   |
 | `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0` | No (optional, for OpenAPI integration) |
+
+---
+
+## Coding Agent Skill
+
+This repository ships an [agent skill](./skills/configure-nestjs-rfc9457/SKILL.md) that teaches AI coding agents (Claude Code, Cursor, Cline, Copilot, and others) how to install and wire `@camcima/nestjs-rfc9457` into a NestJS project. It covers module registration, Tier 1/Tier 2 validation, Swagger integration, custom exception types via `@ProblemType()`, and async configuration with `ConfigService`.
+
+### Install via the [Vercel skills CLI](https://github.com/vercel-labs/skills)
+
+From the root of the NestJS project where you want the agent to use the skill:
+
+```bash
+npx skills add camcima/nestjs-rfc9457
+```
+
+The CLI auto-detects your agent (Claude Code, Cursor, Cline, etc.) and installs the skill into the right location. After installation, ask your agent something like _"set up RFC 9457 problem details in this project"_ — the skill activates automatically and the agent will follow it to install the package, register `Rfc9457Module`, and apply any optional integrations you ask for.
+
+To list installed skills: `npx skills list`. To remove: `npx skills remove configure-nestjs-rfc9457`.
+
+### Manual install
+
+If you don't use the Vercel CLI, copy the skill folder directly into your agent's skill directory. Common locations:
+
+| Agent         | Path                                       |
+| ------------- | ------------------------------------------ |
+| Claude Code   | `.claude/skills/configure-nestjs-rfc9457/` |
+| Cursor        | `.cursor/skills/configure-nestjs-rfc9457/` |
+| Generic / SDK | `.agents/skills/configure-nestjs-rfc9457/` |
+
+The skill is a single self-contained `SKILL.md` — no scripts or assets are required.
 
 ---
 
