@@ -4,34 +4,37 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Test } from '@nestjs/testing';
 import { applyProblemDetailResponses } from '../../../src/swagger/apply-problem-detail-responses';
 
-@Controller('alpha')
-class AlphaController {
-  @Get()
-  index() {
-    return 'ok';
-  }
-}
-
-@Controller('beta')
-class BetaController {
-  @Get()
-  index() {
-    return 'ok';
-  }
-}
-
-@Module({
-  imports: [DiscoveryModule],
-  controllers: [AlphaController, BetaController],
-})
-class TestModule {}
-
 function getResponseContent(pathObj: any, status: string) {
   return pathObj?.[status]?.content?.['application/problem+json'];
 }
 
 describe('applyProblemDetailResponses', () => {
+  // Controllers must be created per-test: applyProblemDetailResponses attaches
+  // @ApiResponse decorators to the controller metatype, and @nestjs/swagger >=11.4
+  // concatenates descriptions for duplicate statuses instead of coalescing them.
   async function createApp() {
+    @Controller('alpha')
+    class AlphaController {
+      @Get()
+      index() {
+        return 'ok';
+      }
+    }
+
+    @Controller('beta')
+    class BetaController {
+      @Get()
+      index() {
+        return 'ok';
+      }
+    }
+
+    @Module({
+      imports: [DiscoveryModule],
+      controllers: [AlphaController, BetaController],
+    })
+    class TestModule {}
+
     const moduleRef = await Test.createTestingModule({
       imports: [TestModule],
     }).compile();
