@@ -329,7 +329,7 @@ describe('ProblemDetailsFactory', () => {
 
   describe('@ProblemType decorator resolution', () => {
     it('uses decorator metadata as template and fills detail from exception', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({
@@ -352,7 +352,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('inherits parent metadata when child is undecorated', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({ type: 'https://example.com/base-error', status: 400 })
@@ -375,7 +375,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('child decorator fully overrides parent', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({ type: 'https://example.com/parent', title: 'Parent', status: 400 })
@@ -400,7 +400,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('decorated template with missing status infers from HttpException', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({ type: 'https://example.com/no-status', title: 'No Status' })
@@ -432,7 +432,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('maps Tier 2 validation (Rfc9457ValidationException) to structured output', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ValidationError } = require('class-validator');
       const factory = createFactory();
       const errors = [
@@ -456,7 +456,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('preserves nested children arrays in Tier 2 (not flattened to dotted paths)', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ValidationError } = require('class-validator');
       const factory = createFactory();
       const childError = Object.assign(new ValidationError(), {
@@ -583,7 +583,7 @@ describe('ProblemDetailsFactory', () => {
 
   describe('precedence order', () => {
     it('exceptionMapper wins over @ProblemType decorator', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({ type: 'https://example.com/decorated', status: 400 })
@@ -606,7 +606,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('@ProblemType decorator wins over default HttpException mapping', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({ type: 'https://example.com/custom-404', title: 'Custom Not Found' })
@@ -623,7 +623,7 @@ describe('ProblemDetailsFactory', () => {
     });
 
     it('@ProblemType decorator wins over validation handling', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { ProblemType } = require('../../src/problem-type.decorator');
 
       @ProblemType({ type: 'https://example.com/custom-validation', status: 400 })
