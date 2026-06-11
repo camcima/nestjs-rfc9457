@@ -7,6 +7,7 @@ import {
   ConfiguredAppModule,
   CatchAllAppModule,
   MapperAppModule,
+  ValidationStatusesAppModule,
 } from './test-app/app.module';
 
 describe('Fastify E2E', () => {
@@ -153,6 +154,36 @@ describe('Fastify E2E', () => {
 
       expect(body.type).toBe('about:blank');
       expect(body.title).toBe('Not Found');
+    });
+  });
+
+  describe('configured with validationStatuses: [400, 422]', () => {
+    let app: INestApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [ValidationStatusesAppModule],
+      }).compile();
+      app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+      await app.init();
+      await app.getHttpAdapter().getInstance().ready();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    it('returns Tier 1 validation errors at a declared custom errorHttpStatusCode (422)', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .post('/test/validate-422')
+        .send({ email: 'not-an-email', age: -5 })
+        .expect(422);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.status).toBe(422);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toBeInstanceOf(Array);
     });
   });
 });

@@ -483,8 +483,8 @@ describe('ProblemDetailsFactory', () => {
       expect(body.errors).toEqual(['email must be an email', 'age must not be less than 0']);
     });
 
-    it('maps Tier 1 validation at a custom errorHttpStatusCode (422)', () => {
-      const factory = createFactory();
+    it('maps Tier 1 validation at a custom errorHttpStatusCode when declared in validationStatuses', () => {
+      const factory = createFactory({ validationStatuses: [400, 422] });
       const exception = new UnprocessableEntityException({
         message: ['email must be an email'],
         error: 'Unprocessable Entity',
@@ -494,6 +494,75 @@ describe('ProblemDetailsFactory', () => {
       expect(body.title).toBe('Unprocessable Entity');
       expect(body.detail).toBe('Request validation failed');
       expect(body.errors).toEqual(['email must be an email']);
+    });
+
+    it('does not classify undeclared statuses as validation — messages survive in detail', () => {
+      // Default validationStatuses is [400]: a 422 ValidationPipe shape falls
+      // through to default HttpException handling with the messages joined.
+      const factory = createFactory();
+      const exception = new UnprocessableEntityException({
+        message: ['email must be an email', 'age must not be less than 0'],
+        error: 'Unprocessable Entity',
+      });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(422);
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.detail).toBe('email must be an email; age must not be less than 0');
+      expect(body.errors).toBeUndefined();
+    });
+
+    it('does not misclassify business 4xx array-constructor exceptions as validation', () => {
+      // new ConflictException([...]) auto-produces { message: [...], error: 'Conflict' } —
+      // the same shape as ValidationPipe output. The allow-list keeps it out of
+      // validation handling (409 is not a declared validation status).
+      const factory = createFactory({
+        validationStatuses: [400, 422],
+        validationExceptionMapper: (messages, _request, status) => ({
+          status,
+          title: 'Validation Failed',
+          violations: messages,
+        }),
+      });
+      const exception = new ConflictException(['order already shipped', 'cannot cancel']);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(409);
+      expect(body.title).toBe('Conflict');
+      expect(body.detail).toBe('order already shipped; cannot cancel');
+      expect(body.violations).toBeUndefined();
+    });
+
+    it('passes the detected status to validationExceptionMapper', () => {
+      const mapper = jest.fn((messages: string[], _request: unknown, status: number) => ({
+        status,
+        title: 'Validation Failed',
+        violations: messages,
+      }));
+      const factory = createFactory({
+        validationStatuses: [400, 422],
+        validationExceptionMapper: mapper,
+      });
+      const exception = new UnprocessableEntityException({
+        message: ['email must be an email'],
+        error: 'Unprocessable Entity',
+      });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(mapper).toHaveBeenCalledWith(['email must be an email'], mockRequest, 422);
+      expect(status).toBe(422);
+      expect(body.violations).toEqual(['email must be an email']);
+    });
+
+    it('matches the status phrase case-insensitively (418 teapot casing)', () => {
+      // Nest's phrase for 418 is "I'm a teapot" while Node's STATUS_CODES has
+      // "I'm a Teapot" — detection must not be defeated by the casing mismatch.
+      const factory = createFactory({ validationStatuses: [418] });
+      const exception = new HttpException(
+        { message: ['short and stout'], error: "I'm a teapot", statusCode: 418 },
+        418,
+      );
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(418);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toEqual(['short and stout']);
     });
 
     it('maps Tier 2 validation (Rfc9457ValidationException) to structured output', () => {

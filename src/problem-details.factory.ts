@@ -231,17 +231,21 @@ export class ProblemDetailsFactory {
       };
     }
 
-    // Tier 1: NestJS ValidationPipe default output — BadRequestException with
-    // the specific { message: string[], error: 'Bad Request' } shape that
-    // ValidationPipe produces. The `error` field check prevents misclassifying
-    // arbitrary business 400s that happen to use message arrays.
+    // Tier 1: NestJS ValidationPipe default output — an HttpException whose
+    // response has the { message: string[], error: <status phrase> } shape
+    // ValidationPipe produces. Detection is restricted to the configured
+    // `validationStatuses` allow-list (default [400]): the shape alone cannot
+    // discriminate validation output from business HttpExceptions constructed
+    // with a message array, because NestJS sets the `error` field to the
+    // status phrase in both cases (e.g. new ConflictException(['...']) yields
+    // { message: [...], error: 'Conflict' }).
     if (this.isDefaultValidationException(exception)) {
       const httpException = exception as HttpException;
       const status = httpException.getStatus();
       const response = httpException.getResponse() as any;
       const messages: string[] = response.message;
       if (this.options.validationExceptionMapper) {
-        return { ...this.options.validationExceptionMapper(messages, request) };
+        return { ...this.options.validationExceptionMapper(messages, request, status) };
       }
       return {
         status,
@@ -257,17 +261,27 @@ export class ProblemDetailsFactory {
   private isDefaultValidationException(exception: unknown): boolean {
     if (!(exception instanceof HttpException)) return false;
     const status = exception.getStatus();
-    // ValidationPipe emits client-error (4xx) responses: 400 by default, or a
-    // custom errorHttpStatusCode such as 422.
-    if (status < 400 || status >= 500) return false;
+    // Only statuses the application has declared as validation statuses are
+    // eligible (default [400], matching ValidationPipe's default). Users who
+    // configure ValidationPipe({ errorHttpStatusCode }) opt in explicitly via
+    // the `validationStatuses` module option. Undeclared statuses degrade
+    // gracefully: extractDetail() joins the message array into `detail`.
+    const validationStatuses = this.options.validationStatuses ?? [400];
+    if (!validationStatuses.includes(status)) return false;
     const response = exception.getResponse();
     if (typeof response !== 'object' || response === null) return false;
     const resp = response as any;
-    // ValidationPipe sets `error` to the HTTP status phrase for the chosen status
-    // (e.g. 'Bad Request' for 400, 'Unprocessable Entity' for 422). Matching on the
-    // phrase prevents misclassifying arbitrary business 4xx errors that happen to
-    // carry a string[] message.
-    if (resp.error !== http.STATUS_CODES[status]) return false;
+    // ValidationPipe sets `error` to the HTTP status phrase for the chosen
+    // status. The comparison is case-insensitive because Nest's phrases can
+    // differ from Node's in casing (418: "I'm a teapot" vs "I'm a Teapot").
+    const phrase = http.STATUS_CODES[status];
+    if (
+      typeof resp.error !== 'string' ||
+      typeof phrase !== 'string' ||
+      resp.error.toLowerCase() !== phrase.toLowerCase()
+    ) {
+      return false;
+    }
     const msg = resp.message;
     return Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string');
   }

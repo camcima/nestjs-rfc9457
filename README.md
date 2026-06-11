@@ -186,6 +186,8 @@ That is all the configuration you need. Every `HttpException` thrown anywhere in
 
 The response `Content-Type` is set to `application/problem+json` as required by the RFC.
 
+> **Hybrid applications (WebSockets / microservices):** the filter only handles HTTP contexts. For non-HTTP transports it rethrows the exception untouched so it never corrupts the transport with an HTTP reply — but the rethrow does **not** re-enter Nest's default WS/RPC handlers. If your app uses gateways or microservice listeners, bind transport-scoped exception filters for those contexts.
+
 ---
 
 ## Configuration
@@ -355,18 +357,34 @@ Rfc9457Module.forRoot({
 
 When `onUnhandled` is **not** provided, the library calls `Logger.error(...)` with either the exception's `stack` string or a `{ exception }` structured context (for non-`Error` values). The log context is `Rfc9457ExceptionFilter` so it can be filtered or silenced via NestJS's logger configuration.
 
+### `validationStatuses`
+
+**Type**: `number[]` | **Default**: `[400]`
+
+The HTTP status codes at which `ValidationPipe` default output is treated as a Tier 1 validation error. Set this when you configure `ValidationPipe({ errorHttpStatusCode })`:
+
+```typescript
+// main.ts
+app.useGlobalPipes(new ValidationPipe({ errorHttpStatusCode: 422 }));
+
+// app.module.ts
+Rfc9457Module.forRoot({ validationStatuses: [400, 422] });
+```
+
+Detection is an explicit allow-list because the validation response shape is indistinguishable from business `HttpException`s constructed with a message array — NestJS sets the `error` field to the status phrase in both cases (e.g. `new ConflictException(['order already shipped'])` produces `{ message: [...], error: 'Conflict' }`). Declare only statuses your application reserves for validation; business exceptions at other statuses are never misclassified. At undeclared statuses, validation messages are still preserved by joining them into `detail`.
+
 ### `validationExceptionMapper`
 
-**Type**: `(messages: string[], request: Rfc9457Request) => ProblemDetail`
+**Type**: `(messages: string[], request: Rfc9457Request, status: number) => ProblemDetail`
 
-Overrides the default Tier 1 validation error response. Receives the flat string array from `BadRequestException.getResponse().message`. Only applies to Tier 1 (flat string) validation errors — Tier 2 structured errors from `Rfc9457ValidationException` bypass this callback.
+Overrides the default Tier 1 validation error response. Receives the flat string array from the exception's `getResponse().message`, the request, and the HTTP status the exception carried (one of `validationStatuses`). Only applies to Tier 1 (flat string) validation errors — Tier 2 structured errors from `Rfc9457ValidationException` bypass this callback.
 
 ```typescript
 Rfc9457Module.forRoot({
-  validationExceptionMapper: (messages, request) => ({
+  validationExceptionMapper: (messages, request, status) => ({
     type: 'https://api.example.com/problems/validation-error',
     title: 'Validation Error',
-    status: 400,
+    status, // echo the detected status — do not hard-code it
     detail: 'One or more fields failed validation',
     violations: messages,
   }),
@@ -556,7 +574,7 @@ Response:
 
 To customize the Tier 1 response, use the `validationExceptionMapper` option described in the [Configuration](#configuration) section.
 
-**Custom status codes.** Tier 1 detection is not limited to `400`. If you configure `ValidationPipe({ errorHttpStatusCode: 422 })` (or any other 4xx), the library still recognizes the validation output and produces a Problem Details response at that status, with the matching `title` (e.g. `Unprocessable Entity`). Detection works by matching the response's `error` field against the HTTP status phrase, which avoids misclassifying ordinary business 4xx errors that merely happen to carry a string-array `message`.
+**Custom status codes.** If you configure `ValidationPipe({ errorHttpStatusCode: 422 })` (or any other 4xx), declare that status in the [`validationStatuses`](#validationstatuses) module option (`validationStatuses: [400, 422]`) and the library produces the same structured validation response at that status, with the matching `title` (e.g. `Unprocessable Entity`). Without the declaration, the messages are still preserved — joined into `detail` — but the `errors` array is not emitted. Detection is an explicit opt-in per status because the validation output shape is indistinguishable from business exceptions constructed with message arrays.
 
 ### Tier 2 — Enhanced structured errors (opt-in)
 
@@ -687,7 +705,7 @@ interface ApplyProblemDetailResponsesOptions {
    * Return false to skip a controller (e.g. health-check controllers).
    * Default: include all controllers.
    */
-  filter?: (controller: InstanceWrapper) => boolean;
+  filter?: (controller: DiscoveredController) => boolean;
 }
 ```
 
@@ -875,6 +893,7 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
 | `ValidationErrorDto`                 | Class     | Swagger DTO for a structured validation error (`property`, `constraints`, `children`) |
 | `applyProblemDetailResponses`        | Function  | Auto-applies `@ApiResponse` decorators to all controllers via `DiscoveryService`      |
 | `ApplyProblemDetailResponsesOptions` | Interface | Options for `applyProblemDetailResponses`                                             |
+| `DiscoveredController`               | Interface | Structural controller view passed to the `filter` option                              |
 
 ---
 

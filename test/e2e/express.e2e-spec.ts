@@ -6,6 +6,7 @@ import {
   ConfiguredAppModule,
   CatchAllAppModule,
   MapperAppModule,
+  ValidationStatusesAppModule,
 } from './test-app/app.module';
 
 describe('Express E2E', () => {
@@ -79,7 +80,9 @@ describe('Express E2E', () => {
       expect(body.errors[0]).toHaveProperty('constraints');
     });
 
-    it('returns Tier 1 validation errors at a custom errorHttpStatusCode (422)', async () => {
+    it('preserves 422 validation messages in detail when 422 is not a declared validation status', async () => {
+      // Default validationStatuses is [400]: the 422 ValidationPipe output is
+      // not classified as validation, but the messages survive joined in detail.
       const { body } = await request(app.getHttpServer())
         .post('/test/validate-422')
         .send({ email: 'not-an-email', age: -5 })
@@ -88,9 +91,9 @@ describe('Express E2E', () => {
       expect(body.type).toBe('about:blank');
       expect(body.title).toBe('Unprocessable Entity');
       expect(body.status).toBe(422);
-      expect(body.detail).toBe('Request validation failed');
-      expect(body.errors).toBeInstanceOf(Array);
-      expect(body.errors.length).toBeGreaterThan(0);
+      expect(typeof body.detail).toBe('string');
+      expect(body.detail.length).toBeGreaterThan(0);
+      expect(body.errors).toBeUndefined();
     });
 
     it('does not catch unhandled exceptions by default', async () => {
@@ -187,6 +190,48 @@ describe('Express E2E', () => {
 
       expect(body.type).toBe('about:blank');
       expect(body.title).toBe('Not Found');
+    });
+  });
+
+  describe('configured with validationStatuses: [400, 422]', () => {
+    let app: INestApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [ValidationStatusesAppModule],
+      }).compile();
+      app = moduleRef.createNestApplication();
+      await app.init();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    it('returns Tier 1 validation errors at a declared custom errorHttpStatusCode (422)', async () => {
+      const { body } = await request(app.getHttpServer())
+        .post('/test/validate-422')
+        .send({ email: 'not-an-email', age: -5 })
+        .expect(422);
+
+      expect(body.type).toBe('about:blank');
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.status).toBe(422);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toBeInstanceOf(Array);
+      expect(body.errors.length).toBeGreaterThan(0);
+      expect(body.errors.every((e: unknown) => typeof e === 'string')).toBe(true);
+    });
+
+    it('still handles default 400 validation alongside the declared 422', async () => {
+      const { body } = await request(app.getHttpServer())
+        .post('/test/validate-default')
+        .send({ email: 'not-an-email', age: -5 })
+        .expect(400);
+
+      expect(body.title).toBe('Bad Request');
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toBeInstanceOf(Array);
     });
   });
 });

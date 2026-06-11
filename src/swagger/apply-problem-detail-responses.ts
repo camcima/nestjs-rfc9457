@@ -1,9 +1,22 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, Type } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
-import { InstanceWrapper } from '@nestjs/core/injector/instance-wrapper';
 import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
 import * as http from 'node:http';
 import { ProblemDetailDto, ValidationProblemDetailDto } from './problem-detail.dto';
+
+/**
+ * Structural view of a discovered controller passed to the `filter` option.
+ * Deliberately typed structurally (rather than as Nest's internal
+ * `InstanceWrapper`) so the published type declarations do not depend on
+ * non-semver-protected `@nestjs/core` internals.
+ */
+export interface DiscoveredController {
+  /** The controller class, when available. */
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- must remain a supertype of Nest's InstanceWrapper['metatype'] (Type<T> | Function | null)
+  metatype?: Type<unknown> | Function | null;
+  /** The provider token name (usually the class name). */
+  name?: string;
+}
 
 export interface ApplyProblemDetailResponsesOptions {
   /** HTTP status codes to document. Default: `[400, 500]`. */
@@ -22,7 +35,7 @@ export interface ApplyProblemDetailResponsesOptions {
    * Return `false` to skip a controller (e.g. health-check controllers).
    * Receives the discovered controller wrapper. Default: include all controllers.
    */
-  filter?: (controller: InstanceWrapper) => boolean;
+  filter?: (controller: DiscoveredController) => boolean;
 }
 
 /**
@@ -55,9 +68,10 @@ export function applyProblemDetailResponses(
   let discoveryService: DiscoveryService;
   try {
     discoveryService = app.get(DiscoveryService);
-  } catch {
+  } catch (error) {
     throw new Error(
       'applyProblemDetailResponses requires DiscoveryModule. Add DiscoveryModule (from @nestjs/core) to your application module imports.',
+      { cause: error },
     );
   }
   const controllers = discoveryService.getControllers();
