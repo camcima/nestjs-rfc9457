@@ -1,6 +1,6 @@
 import { HttpException, Inject, Injectable } from '@nestjs/common';
-import * as http from 'http';
-import { randomUUID } from 'crypto';
+import * as http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import {
   ProblemDetail,
   ProblemTypeMetadata,
@@ -184,7 +184,7 @@ export class ProblemDetailsFactory {
   private resolveInstance(request: Rfc9457Request, exception: unknown): string | undefined {
     const strategy = this.options.instanceStrategy || 'none';
     if (strategy === 'none') return undefined;
-    if (strategy === 'request-uri') return request.url;
+    if (strategy === 'request-uri') return request.url.split('?')[0];
     if (strategy === 'uuid') return `urn:uuid:${randomUUID()}`;
     if (typeof strategy === 'function') return strategy(request, exception);
     return undefined;
@@ -205,6 +205,9 @@ export class ProblemDetailsFactory {
         if (typeof msg === 'string' && msg.length > 0) {
           return msg === defaultPhrase ? undefined : msg;
         }
+        if (Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string')) {
+          return msg.join('; ');
+        }
       }
       return undefined;
     }
@@ -219,6 +222,7 @@ export class ProblemDetailsFactory {
     // no longer imports class-validator at runtime (validationErrors is unknown[]).
     if (exception instanceof Rfc9457ValidationException) {
       const validationErrors = exception.validationErrors;
+      // Rfc9457ValidationException extends BadRequestException, so it is always 400.
       return {
         status: 400,
         title: 'Bad Request',
@@ -232,14 +236,16 @@ export class ProblemDetailsFactory {
     // ValidationPipe produces. The `error` field check prevents misclassifying
     // arbitrary business 400s that happen to use message arrays.
     if (this.isDefaultValidationException(exception)) {
-      const response = (exception as HttpException).getResponse() as any;
+      const httpException = exception as HttpException;
+      const status = httpException.getStatus();
+      const response = httpException.getResponse() as any;
       const messages: string[] = response.message;
       if (this.options.validationExceptionMapper) {
-        return this.options.validationExceptionMapper(messages, request);
+        return { ...this.options.validationExceptionMapper(messages, request) };
       }
       return {
-        status: 400,
-        title: 'Bad Request',
+        status,
+        title: http.STATUS_CODES[status] || 'Bad Request',
         detail: 'Request validation failed',
         errors: messages,
       };
@@ -250,12 +256,18 @@ export class ProblemDetailsFactory {
 
   private isDefaultValidationException(exception: unknown): boolean {
     if (!(exception instanceof HttpException)) return false;
-    if (exception.getStatus() !== 400) return false;
+    const status = exception.getStatus();
+    // ValidationPipe emits client-error (4xx) responses: 400 by default, or a
+    // custom errorHttpStatusCode such as 422.
+    if (status < 400 || status >= 500) return false;
     const response = exception.getResponse();
     if (typeof response !== 'object' || response === null) return false;
     const resp = response as any;
-    // NestJS ValidationPipe always sets error: 'Bad Request' alongside message: string[]
-    if (resp.error !== 'Bad Request') return false;
+    // ValidationPipe sets `error` to the HTTP status phrase for the chosen status
+    // (e.g. 'Bad Request' for 400, 'Unprocessable Entity' for 422). Matching on the
+    // phrase prevents misclassifying arbitrary business 4xx errors that happen to
+    // carry a string[] message.
+    if (resp.error !== http.STATUS_CODES[status]) return false;
     const msg = resp.message;
     return Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string');
   }

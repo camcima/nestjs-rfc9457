@@ -17,10 +17,12 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
   }
 
   catch(exception: unknown, host: ArgumentsHost): void {
-    // Only handle HTTP context — other transports (WS, RPC) delegate to Nest
+    // Only handle HTTP context. For other transports (WS, RPC) we rethrow rather
+    // than calling super.catch(): BaseExceptionFilter is HTTP-adapter based and
+    // would try to write an HTTP reply to a non-HTTP context. Rethrowing lets
+    // Nest route the exception through its WS/RPC exception machinery instead.
     if (host.getType() !== 'http') {
-      super.catch(exception, host);
-      return;
+      throw exception;
     }
 
     const isHttpException = exception instanceof HttpException;
@@ -67,7 +69,7 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
         // slot while preserving the constructor's context (`Rfc9457ExceptionFilter`).
         this.logger.error(`Unhandled non-HTTP exception: ${exception.message}`, exception.stack);
       } else {
-        this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', exception);
+        this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', { exception });
       }
     }
 

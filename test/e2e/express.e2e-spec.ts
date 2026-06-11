@@ -79,6 +79,20 @@ describe('Express E2E', () => {
       expect(body.errors[0]).toHaveProperty('constraints');
     });
 
+    it('returns Tier 1 validation errors at a custom errorHttpStatusCode (422)', async () => {
+      const { body } = await request(app.getHttpServer())
+        .post('/test/validate-422')
+        .send({ email: 'not-an-email', age: -5 })
+        .expect(422);
+
+      expect(body.type).toBe('about:blank');
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.status).toBe(422);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toBeInstanceOf(Array);
+      expect(body.errors.length).toBeGreaterThan(0);
+    });
+
     it('does not catch unhandled exceptions by default', async () => {
       // Default NestJS error handler returns its own format
       const { body } = await request(app.getHttpServer()).get('/test/unhandled').expect(500);

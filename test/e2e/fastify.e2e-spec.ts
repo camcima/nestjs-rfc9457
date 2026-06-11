@@ -2,7 +2,12 @@ import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import request from 'supertest';
-import { DefaultAppModule, ConfiguredAppModule, CatchAllAppModule } from './test-app/app.module';
+import {
+  DefaultAppModule,
+  ConfiguredAppModule,
+  CatchAllAppModule,
+  MapperAppModule,
+} from './test-app/app.module';
 
 describe('Fastify E2E', () => {
   describe('default configuration', () => {
@@ -114,6 +119,40 @@ describe('Fastify E2E', () => {
       expect(body.title).toBe('Internal Server Error');
       expect(body.status).toBe(500);
       expect(body.detail).toBeUndefined();
+    });
+  });
+
+  describe('configured with exceptionMapper', () => {
+    let app: INestApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [MapperAppModule],
+      }).compile();
+      app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+      await app.init();
+      await app.getHttpAdapter().getInstance().ready();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    it('exceptionMapper overrides decorated exception', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .get('/test/custom-exception')
+        .expect(422);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.type).toBe('https://api.example.com/problems/mapper-override');
+      expect(body.title).toBe('Mapper Override');
+    });
+
+    it('falls through to default handling when mapper returns null', async () => {
+      const { body } = await request(app.getHttpServer()).get('/test/not-found').expect(404);
+
+      expect(body.type).toBe('about:blank');
+      expect(body.title).toBe('Not Found');
     });
   });
 });

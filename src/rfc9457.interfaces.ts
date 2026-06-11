@@ -2,12 +2,14 @@ import { Type } from '@nestjs/common';
 
 /**
  * Minimal request context used by the factory and callbacks.
- * Compatible with both Express and Fastify request objects.
+ * Declares only the members the library itself relies on. Both Express's
+ * `Request` and Fastify's `FastifyRequest` are structurally assignable to it.
+ * To read adapter-specific fields inside a callback, narrow to the concrete
+ * request type (e.g. `request as unknown as Request`).
  */
 export interface Rfc9457Request {
   url: string;
   method: string;
-  [key: string]: unknown;
 }
 
 /**

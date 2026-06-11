@@ -167,4 +167,66 @@ describe('applyProblemDetailResponses', () => {
 
     await app.close();
   });
+
+  it('throws an actionable error when DiscoveryModule is not imported', async () => {
+    @Controller('gamma')
+    class GammaController {
+      @Get()
+      index() {
+        return 'ok';
+      }
+    }
+
+    @Module({
+      controllers: [GammaController],
+    })
+    class NoDiscoveryModule {}
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [NoDiscoveryModule],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    await app.init();
+
+    expect(() => applyProblemDetailResponses(app)).toThrow(/requires DiscoveryModule/);
+
+    await app.close();
+  });
+
+  it('falls back to "HTTP <status>" description for non-standard statuses', async () => {
+    const app = await createApp();
+
+    applyProblemDetailResponses(app, { statuses: [599] });
+
+    const config = new DocumentBuilder().build();
+    const document = SwaggerModule.createDocument(app, config);
+
+    const responses = document.paths['/alpha']?.get?.responses as any;
+    expect(responses['599'].description).toBe('HTTP 599');
+
+    await app.close();
+  });
+
+  it('excludes controllers rejected by the filter option', async () => {
+    const app = await createApp();
+
+    applyProblemDetailResponses(app, {
+      filter: (controller) => controller.metatype?.name !== 'BetaController',
+    });
+
+    const config = new DocumentBuilder().build();
+    const document = SwaggerModule.createDocument(app, config);
+
+    // Included controller receives the problem-detail responses.
+    const alphaResponses = document.paths['/alpha']?.get?.responses;
+    expect(getResponseContent(alphaResponses, '400')).toBeDefined();
+    expect(getResponseContent(alphaResponses, '500')).toBeDefined();
+
+    // Filtered-out controller does NOT receive them.
+    const betaResponses = document.paths['/beta']?.get?.responses;
+    expect(getResponseContent(betaResponses, '400')).toBeUndefined();
+    expect(getResponseContent(betaResponses, '500')).toBeUndefined();
+
+    await app.close();
+  });
 });

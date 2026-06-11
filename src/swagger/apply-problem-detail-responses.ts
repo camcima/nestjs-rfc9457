@@ -1,7 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
+import { InstanceWrapper } from '@nestjs/core/injector/instance-wrapper';
 import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
-import * as http from 'http';
+import * as http from 'node:http';
 import { ProblemDetailDto, ValidationProblemDetailDto } from './problem-detail.dto';
 
 export interface ApplyProblemDetailResponsesOptions {
@@ -16,6 +17,12 @@ export interface ApplyProblemDetailResponsesOptions {
    * validation) and want the `errors` array documented in your OpenAPI spec.
    */
   validationStatuses?: number[];
+
+  /**
+   * Return `false` to skip a controller (e.g. health-check controllers).
+   * Receives the discovered controller wrapper. Default: include all controllers.
+   */
+  filter?: (controller: InstanceWrapper) => boolean;
 }
 
 /**
@@ -45,13 +52,21 @@ export function applyProblemDetailResponses(
   app: INestApplication,
   options?: ApplyProblemDetailResponsesOptions,
 ): void {
-  const discoveryService = app.get(DiscoveryService);
+  let discoveryService: DiscoveryService;
+  try {
+    discoveryService = app.get(DiscoveryService);
+  } catch {
+    throw new Error(
+      'applyProblemDetailResponses requires DiscoveryModule. Add DiscoveryModule (from @nestjs/core) to your application module imports.',
+    );
+  }
   const controllers = discoveryService.getControllers();
   const statuses = options?.statuses ?? [400, 500];
   const validationStatuses = new Set(options?.validationStatuses ?? []);
 
   for (const controller of controllers) {
     if (!controller.metatype) continue;
+    if (options?.filter && !options.filter(controller)) continue;
 
     ApiExtraModels(ProblemDetailDto, ValidationProblemDetailDto)(controller.metatype);
 
@@ -62,7 +77,7 @@ export function applyProblemDetailResponses(
 
       ApiResponse({
         status,
-        description: http.STATUS_CODES[status],
+        description: http.STATUS_CODES[status] ?? `HTTP ${status}`,
         content: {
           'application/problem+json': {
             schema: { $ref: getSchemaPath(dtoClass) },

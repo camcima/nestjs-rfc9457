@@ -12,7 +12,7 @@
 [![npm version](https://img.shields.io/npm/v/@camcima/nestjs-rfc9457)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18%20%7C%2020%20%7C%2022-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%20%7C%2022%20%7C%2024-green.svg)](https://nodejs.org/)
 
 </div>
 
@@ -107,8 +107,10 @@ pnpm add @camcima/nestjs-rfc9457
 | `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
 | `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
 | `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`             | Yes                                    |
-| `class-validator`  | `^0.14.0`                         | No (optional, for Tier 2 validation)   |
+| `class-validator`  | `^0.14.0 \|\| ^0.15.0`            | No (optional, for Tier 2 validation)   |
 | `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0` | No (optional, for OpenAPI integration) |
+
+> **Note:** `reflect-metadata` must be imported once at your application's entry point. NestJS's standard bootstrap already does this, so no extra setup is needed in a typical app — the library relies on it for `@ProblemType()` decorator metadata.
 
 ---
 
@@ -251,6 +253,11 @@ Rfc9457Module.forRoot({ instanceStrategy: 'request-uri' });
 // instance: "/api/users/42"
 ```
 
+The query string is stripped before the path is used as `instance`, so query
+parameters (which often carry tokens or PII) are never echoed into the response
+body. If you need the full URL including the query string, use a custom callback
+that returns `request.url`.
+
 **`'uuid'`** — generates a `urn:uuid:<v4>` per occurrence:
 
 ```typescript
@@ -276,11 +283,19 @@ The `request` parameter implements `Rfc9457Request`:
 interface Rfc9457Request {
   url: string;
   method: string;
-  [key: string]: unknown;
 }
 ```
 
-Both Express and Fastify request objects satisfy this interface.
+Both Express's `Request` and Fastify's `FastifyRequest` are structurally
+assignable to this interface, so you can pass them directly. To read
+adapter-specific fields inside a callback, narrow to the concrete request type:
+
+```typescript
+instanceStrategy: (request) => {
+  const req = request as unknown as import('express').Request;
+  return `https://errors.example.com/log?id=${req.headers['x-request-id']}`;
+};
+```
 
 ### `catchAllExceptions`
 
@@ -541,6 +556,8 @@ Response:
 
 To customize the Tier 1 response, use the `validationExceptionMapper` option described in the [Configuration](#configuration) section.
 
+**Custom status codes.** Tier 1 detection is not limited to `400`. If you configure `ValidationPipe({ errorHttpStatusCode: 422 })` (or any other 4xx), the library still recognizes the validation output and produces a Problem Details response at that status, with the matching `title` (e.g. `Unprocessable Entity`). Detection works by matching the response's `error` field against the HTTP status phrase, which avoids misclassifying ordinary business 4xx errors that merely happen to carry a string-array `message`.
+
 ### Tier 2 — Enhanced structured errors (opt-in)
 
 For rich, structured validation output with `property`, `constraints`, and nested `children` arrays, use the `createRfc9457ValidationPipeExceptionFactory` helper.
@@ -665,7 +682,23 @@ interface ApplyProblemDetailResponsesOptions {
    * instead of the base ProblemDetailDto. Default: [].
    */
   validationStatuses?: number[];
+
+  /**
+   * Return false to skip a controller (e.g. health-check controllers).
+   * Default: include all controllers.
+   */
+  filter?: (controller: InstanceWrapper) => boolean;
 }
+```
+
+#### Excluding controllers
+
+Pass a `filter` to skip controllers you don't want documented with the default error responses — for example a health-check endpoint:
+
+```typescript
+applyProblemDetailResponses(app, {
+  filter: (controller) => controller.metatype?.name !== 'HealthController',
+});
 ```
 
 #### Documenting additional statuses
