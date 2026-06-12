@@ -1,4 +1,4 @@
-import { Controller, Get, Module } from '@nestjs/common';
+import { Controller, Get, INestApplication, Module } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Test } from '@nestjs/testing';
@@ -228,5 +228,19 @@ describe('applyProblemDetailResponses', () => {
     expect(getResponseContent(betaResponses, '500')).toBeUndefined();
 
     await app.close();
+  });
+
+  it('skips controller wrappers without a metatype', () => {
+    // Some discovered wrappers can lack a metatype (e.g. value providers);
+    // the helper must skip them instead of passing undefined to the
+    // decorator factories. Faked at the DiscoveryService seam because a
+    // real Nest controller always has one.
+    const filter = jest.fn().mockReturnValue(true);
+    const fakeDiscovery = { getControllers: () => [{ metatype: null, name: 'NoMeta' }] };
+    const fakeApp = { get: () => fakeDiscovery } as unknown as INestApplication;
+
+    expect(() => applyProblemDetailResponses(fakeApp, { filter })).not.toThrow();
+    // The wrapper was skipped before the filter could run.
+    expect(filter).not.toHaveBeenCalled();
   });
 });

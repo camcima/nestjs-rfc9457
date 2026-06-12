@@ -669,6 +669,90 @@ describe('ProblemDetailsFactory', () => {
     });
   });
 
+  describe('edge-case branches', () => {
+    it('works when constructed without options (default parameter)', () => {
+      const factory = new ProblemDetailsFactory();
+      const { status, body } = factory.create(new NotFoundException('gone'), mockRequest);
+      expect(status).toBe(404);
+      expect(body.type).toBe('about:blank');
+      expect(body.detail).toBe('gone');
+    });
+
+    it('handles thrown objects with no constructor (null prototype)', () => {
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(Object.create(null), mockRequest);
+      expect(status).toBe(500);
+      expect(body.title).toBe('Internal Server Error');
+    });
+
+    it('omits detail for a decorated plain Error with an empty message', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { ProblemType } = require('../../src/problem-type.decorator');
+      @ProblemType({ type: 'https://example.com/silent', title: 'Silent', status: 502 })
+      class SilentError extends Error {
+        constructor() {
+          super('');
+        }
+      }
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(new SilentError(), mockRequest);
+      expect(status).toBe(502);
+      expect(body.title).toBe('Silent');
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('omits detail for a decorated non-Error object', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { ProblemType } = require('../../src/problem-type.decorator');
+      @ProblemType({ type: 'https://example.com/weird', title: 'Weird', status: 500 })
+      class WeirdThrowable {}
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(new WeirdThrowable(), mockRequest);
+      expect(status).toBe(500);
+      expect(body.type).toBe('https://example.com/weird');
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('falls back to "Unknown Error" title for a non-standard HttpException status', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(new HttpException('odd', 599), mockRequest);
+      expect(status).toBe(599);
+      expect(body.title).toBe('Unknown Error');
+      expect(body.detail).toBe('odd');
+    });
+
+    it('fills "Unknown Error" title and unknown-error slug when mapper returns a bare non-standard status', () => {
+      const factory = createFactory({
+        typeBaseUri: 'https://api.example.com/problems',
+        exceptionMapper: () => ({ status: 599 }),
+      });
+      const { status, body } = factory.create(new NotFoundException(), mockRequest);
+      expect(status).toBe(599);
+      expect(body.title).toBe('Unknown Error');
+      expect(body.type).toBe('https://api.example.com/problems/unknown-error');
+    });
+
+    it('omits instance for an unrecognized instanceStrategy value', () => {
+      const factory = createFactory({ instanceStrategy: 'bogus' as any });
+      const { body } = factory.create(new NotFoundException(), mockRequest);
+      expect(body.instance).toBeUndefined();
+    });
+
+    it('omits detail when a string response equals the default status phrase', () => {
+      const factory = createFactory();
+      const { body } = factory.create(new HttpException('Forbidden', 403), mockRequest);
+      expect(body.detail).toBeUndefined();
+      expect(body.title).toBe('Forbidden');
+    });
+
+    it('omits detail for a null exception response', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(new HttpException(null as any, 400), mockRequest);
+      expect(status).toBe(400);
+      expect(body.detail).toBeUndefined();
+    });
+  });
+
   describe('unknown exception fallback', () => {
     it('produces generic 500 for non-HttpException (catch-all mode)', () => {
       const factory = createFactory({ catchAllExceptions: true });

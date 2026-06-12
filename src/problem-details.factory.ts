@@ -249,7 +249,10 @@ export class ProblemDetailsFactory {
       }
       return {
         status,
-        title: http.STATUS_CODES[status] || 'Bad Request',
+        // Detection already matched the response's `error` field against
+        // STATUS_CODES[status], so the phrase is guaranteed to exist here;
+        // normalize() fills any missing title as a safety net regardless.
+        title: http.STATUS_CODES[status],
         detail: 'Request validation failed',
         errors: messages,
       };
