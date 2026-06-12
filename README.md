@@ -146,7 +146,7 @@ The skill is a single self-contained `SKILL.md` — no scripts or assets are req
 
 ## Quick Start
 
-Import `Rfc9457Module` once in your root `AppModule`. Because the module is **global**, you do not need to import it in any other module — the exception filter applies everywhere in your application automatically.
+Import `Rfc9457Module` once in your root `AppModule`. Because the module is **global**, you do not need to import it in any other module — the exception filter applies everywhere in your application automatically. Do not call `forRoot()` in more than one module: each call registers another global exception filter.
 
 ```typescript
 // app.module.ts

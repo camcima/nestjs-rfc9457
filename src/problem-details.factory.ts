@@ -140,12 +140,7 @@ export class ProblemDetailsFactory {
   }
 
   private resolveStatus(result: ProblemDetail, exception: unknown): number {
-    if (
-      result.status !== undefined &&
-      typeof result.status === 'number' &&
-      result.status >= 100 &&
-      result.status < 600
-    ) {
+    if (typeof result.status === 'number' && result.status >= 100 && result.status < 600) {
       return result.status;
     }
     if (exception instanceof HttpException) {
@@ -206,7 +201,9 @@ export class ProblemDetailsFactory {
           return msg === defaultPhrase ? undefined : msg;
         }
         if (Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string')) {
-          return msg.join('; ');
+          const joined = msg.join('; ');
+          // Same boilerplate suppression as the string branch above
+          return joined === defaultPhrase ? undefined : joined;
         }
       }
       return undefined;

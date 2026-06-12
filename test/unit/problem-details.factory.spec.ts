@@ -150,6 +150,14 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(exception, mockRequest);
       expect(body.detail).toBe('a conflict; another conflict');
     });
+
+    it('omits detail when a joined string[] message equals the default status phrase', () => {
+      const factory = createFactory();
+      const exception = new ConflictException({ message: ['Conflict'] });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(409);
+      expect(body.detail).toBeUndefined();
+    });
   });
 
   describe('typeBaseUri', () => {
