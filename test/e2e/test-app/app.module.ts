@@ -32,6 +32,16 @@ export class CatchAllAppModule {}
 @Module({
   imports: [
     Rfc9457Module.forRoot({
+      validationStatuses: [400, 422],
+    }),
+  ],
+  controllers: [AppController],
+})
+export class ValidationStatusesAppModule {}
+
+@Module({
+  imports: [
+    Rfc9457Module.forRoot({
       exceptionMapper: (exception) => {
         if (exception instanceof Error && exception.message.includes('Balance')) {
           return {

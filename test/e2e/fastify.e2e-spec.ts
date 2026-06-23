@@ -2,7 +2,13 @@ import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import request from 'supertest';
-import { DefaultAppModule, ConfiguredAppModule, CatchAllAppModule } from './test-app/app.module';
+import {
+  DefaultAppModule,
+  ConfiguredAppModule,
+  CatchAllAppModule,
+  MapperAppModule,
+  ValidationStatusesAppModule,
+} from './test-app/app.module';
 
 describe('Fastify E2E', () => {
   describe('default configuration', () => {
@@ -114,6 +120,70 @@ describe('Fastify E2E', () => {
       expect(body.title).toBe('Internal Server Error');
       expect(body.status).toBe(500);
       expect(body.detail).toBeUndefined();
+    });
+  });
+
+  describe('configured with exceptionMapper', () => {
+    let app: INestApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [MapperAppModule],
+      }).compile();
+      app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+      await app.init();
+      await app.getHttpAdapter().getInstance().ready();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    it('exceptionMapper overrides decorated exception', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .get('/test/custom-exception')
+        .expect(422);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.type).toBe('https://api.example.com/problems/mapper-override');
+      expect(body.title).toBe('Mapper Override');
+    });
+
+    it('falls through to default handling when mapper returns null', async () => {
+      const { body } = await request(app.getHttpServer()).get('/test/not-found').expect(404);
+
+      expect(body.type).toBe('about:blank');
+      expect(body.title).toBe('Not Found');
+    });
+  });
+
+  describe('configured with validationStatuses: [400, 422]', () => {
+    let app: INestApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [ValidationStatusesAppModule],
+      }).compile();
+      app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+      await app.init();
+      await app.getHttpAdapter().getInstance().ready();
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    it('returns Tier 1 validation errors at a declared custom errorHttpStatusCode (422)', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .post('/test/validate-422')
+        .send({ email: 'not-an-email', age: -5 })
+        .expect(422);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.status).toBe(422);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toBeInstanceOf(Array);
     });
   });
 });

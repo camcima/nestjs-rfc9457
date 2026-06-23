@@ -1,8 +1,22 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, Type } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
-import * as http from 'http';
+import * as http from 'node:http';
 import { ProblemDetailDto, ValidationProblemDetailDto } from './problem-detail.dto';
+
+/**
+ * Structural view of a discovered controller passed to the `filter` option.
+ * Deliberately typed structurally (rather than as Nest's internal
+ * `InstanceWrapper`) so the published type declarations do not depend on
+ * non-semver-protected `@nestjs/core` internals.
+ */
+export interface DiscoveredController {
+  /** The controller class, when available. */
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- must remain a supertype of Nest's InstanceWrapper['metatype'] (Type<T> | Function | null)
+  metatype?: Type<unknown> | Function | null;
+  /** The provider token name (usually the class name). */
+  name?: string;
+}
 
 export interface ApplyProblemDetailResponsesOptions {
   /** HTTP status codes to document. Default: `[400, 500]`. */
@@ -16,6 +30,12 @@ export interface ApplyProblemDetailResponsesOptions {
    * validation) and want the `errors` array documented in your OpenAPI spec.
    */
   validationStatuses?: number[];
+
+  /**
+   * Return `false` to skip a controller (e.g. health-check controllers).
+   * Receives the discovered controller wrapper. Default: include all controllers.
+   */
+  filter?: (controller: DiscoveredController) => boolean;
 }
 
 /**
@@ -45,13 +65,22 @@ export function applyProblemDetailResponses(
   app: INestApplication,
   options?: ApplyProblemDetailResponsesOptions,
 ): void {
-  const discoveryService = app.get(DiscoveryService);
+  let discoveryService: DiscoveryService;
+  try {
+    discoveryService = app.get(DiscoveryService);
+  } catch (error) {
+    throw new Error(
+      'applyProblemDetailResponses requires DiscoveryModule. Add DiscoveryModule (from @nestjs/core) to your application module imports.',
+      { cause: error },
+    );
+  }
   const controllers = discoveryService.getControllers();
   const statuses = options?.statuses ?? [400, 500];
   const validationStatuses = new Set(options?.validationStatuses ?? []);
 
   for (const controller of controllers) {
     if (!controller.metatype) continue;
+    if (options?.filter && !options.filter(controller)) continue;
 
     ApiExtraModels(ProblemDetailDto, ValidationProblemDetailDto)(controller.metatype);
 
@@ -62,7 +91,7 @@ export function applyProblemDetailResponses(
 
       ApiResponse({
         status,
-        description: http.STATUS_CODES[status],
+        description: http.STATUS_CODES[status] ?? `HTTP ${status}`,
         content: {
           'application/problem+json': {
             schema: { $ref: getSchemaPath(dtoClass) },

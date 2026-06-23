@@ -130,5 +130,9 @@ describe('Rfc9457Module', () => {
       const options: Rfc9457ModuleOptions = module.get(RFC9457_MODULE_OPTIONS);
       expect(options.catchAllExceptions).toBe(true);
     });
+
+    it('throws a descriptive error when no provider strategy is given', () => {
+      expect(() => Rfc9457Module.forRootAsync({})).toThrow(/useFactory, useClass, or useExisting/);
+    });
   });
 });

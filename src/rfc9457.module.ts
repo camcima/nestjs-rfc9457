@@ -82,6 +82,8 @@ export class Rfc9457Module {
         },
       ];
     }
-    return [];
+    throw new Error(
+      'Rfc9457Module.forRootAsync() requires one of: useFactory, useClass, or useExisting',
+    );
   }
 }

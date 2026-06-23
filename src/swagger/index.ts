@@ -6,4 +6,5 @@ export {
 export {
   applyProblemDetailResponses,
   ApplyProblemDetailResponsesOptions,
+  DiscoveredController,
 } from './apply-problem-detail-responses';

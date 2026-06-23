@@ -134,7 +134,7 @@ describe('Rfc9457ExceptionFilter', () => {
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
   });
 
-  it('delegates to super for non-http context', () => {
+  it('rethrows for non-http context so Nest handles WS/RPC exceptions', () => {
     const { filter, mockHttpAdapter } = createMocks();
     const wsHost = {
       getType: () => 'ws',
@@ -142,11 +142,8 @@ describe('Rfc9457ExceptionFilter', () => {
         throw new Error('should not be called');
       },
     } as unknown as ArgumentsHost;
-    try {
-      filter.catch(new NotFoundException(), wsHost);
-    } catch {
-      // Expected: BaseExceptionFilter.catch fails in test environment
-    }
+    const original = new NotFoundException();
+    expect(() => filter.catch(original, wsHost)).toThrow(original);
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
   });
 
@@ -183,12 +180,12 @@ describe('Rfc9457ExceptionFilter', () => {
       );
     });
 
-    it('logs non-Error thrown values with the raw value as a second argument', () => {
+    it('logs non-Error thrown values wrapped in a structured context object', () => {
       const { filter, mockHost } = createMocks({ catchAllExceptions: true });
       filter.catch({ oddity: true, value: 42 }, mockHost);
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         'Unhandled non-HTTP exception (non-Error value thrown)',
-        { oddity: true, value: 42 },
+        { exception: { oddity: true, value: 42 } },
       );
     });
 

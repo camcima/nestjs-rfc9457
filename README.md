@@ -12,7 +12,7 @@
 [![npm version](https://img.shields.io/npm/v/@camcima/nestjs-rfc9457)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18%20%7C%2020%20%7C%2022-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%20%7C%2022%20%7C%2024-green.svg)](https://nodejs.org/)
 
 </div>
 
@@ -107,8 +107,10 @@ pnpm add @camcima/nestjs-rfc9457
 | `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
 | `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
 | `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`             | Yes                                    |
-| `class-validator`  | `^0.14.0`                         | No (optional, for Tier 2 validation)   |
+| `class-validator`  | `^0.14.0 \|\| ^0.15.0`            | No (optional, for Tier 2 validation)   |
 | `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0` | No (optional, for OpenAPI integration) |
+
+> **Note:** `reflect-metadata` must be imported once at your application's entry point. NestJS's standard bootstrap already does this, so no extra setup is needed in a typical app — the library relies on it for `@ProblemType()` decorator metadata.
 
 ---
 
@@ -144,7 +146,7 @@ The skill is a single self-contained `SKILL.md` — no scripts or assets are req
 
 ## Quick Start
 
-Import `Rfc9457Module` once in your root `AppModule`. Because the module is **global**, you do not need to import it in any other module — the exception filter applies everywhere in your application automatically.
+Import `Rfc9457Module` once in your root `AppModule`. Because the module is **global**, you do not need to import it in any other module — the exception filter applies everywhere in your application automatically. Do not call `forRoot()` in more than one module: each call registers another global exception filter.
 
 ```typescript
 // app.module.ts
@@ -183,6 +185,8 @@ That is all the configuration you need. Every `HttpException` thrown anywhere in
 ```
 
 The response `Content-Type` is set to `application/problem+json` as required by the RFC.
+
+> **Hybrid applications (WebSockets / microservices):** the filter only handles HTTP contexts. For non-HTTP transports it rethrows the exception untouched so it never corrupts the transport with an HTTP reply — but the rethrow does **not** re-enter Nest's default WS/RPC handlers. If your app uses gateways or microservice listeners, bind transport-scoped exception filters for those contexts.
 
 ---
 
@@ -251,6 +255,11 @@ Rfc9457Module.forRoot({ instanceStrategy: 'request-uri' });
 // instance: "/api/users/42"
 ```
 
+The query string is stripped before the path is used as `instance`, so query
+parameters (which often carry tokens or PII) are never echoed into the response
+body. If you need the full URL including the query string, use a custom callback
+that returns `request.url`.
+
 **`'uuid'`** — generates a `urn:uuid:<v4>` per occurrence:
 
 ```typescript
@@ -276,11 +285,19 @@ The `request` parameter implements `Rfc9457Request`:
 interface Rfc9457Request {
   url: string;
   method: string;
-  [key: string]: unknown;
 }
 ```
 
-Both Express and Fastify request objects satisfy this interface.
+Both Express's `Request` and Fastify's `FastifyRequest` are structurally
+assignable to this interface, so you can pass them directly. To read
+adapter-specific fields inside a callback, narrow to the concrete request type:
+
+```typescript
+instanceStrategy: (request) => {
+  const req = request as unknown as import('express').Request;
+  return `https://errors.example.com/log?id=${req.headers['x-request-id']}`;
+};
+```
 
 ### `catchAllExceptions`
 
@@ -340,18 +357,34 @@ Rfc9457Module.forRoot({
 
 When `onUnhandled` is **not** provided, the library calls `Logger.error(...)` with either the exception's `stack` string or a `{ exception }` structured context (for non-`Error` values). The log context is `Rfc9457ExceptionFilter` so it can be filtered or silenced via NestJS's logger configuration.
 
+### `validationStatuses`
+
+**Type**: `number[]` | **Default**: `[400]`
+
+The HTTP status codes at which `ValidationPipe` default output is treated as a Tier 1 validation error. Set this when you configure `ValidationPipe({ errorHttpStatusCode })`:
+
+```typescript
+// main.ts
+app.useGlobalPipes(new ValidationPipe({ errorHttpStatusCode: 422 }));
+
+// app.module.ts
+Rfc9457Module.forRoot({ validationStatuses: [400, 422] });
+```
+
+Detection is an explicit allow-list because the validation response shape is indistinguishable from business `HttpException`s constructed with a message array — NestJS sets the `error` field to the status phrase in both cases (e.g. `new ConflictException(['order already shipped'])` produces `{ message: [...], error: 'Conflict' }`). Declare only statuses your application reserves for validation; business exceptions at other statuses are never misclassified. At undeclared statuses, validation messages are still preserved by joining them into `detail`.
+
 ### `validationExceptionMapper`
 
-**Type**: `(messages: string[], request: Rfc9457Request) => ProblemDetail`
+**Type**: `(messages: string[], request: Rfc9457Request, status: number) => ProblemDetail`
 
-Overrides the default Tier 1 validation error response. Receives the flat string array from `BadRequestException.getResponse().message`. Only applies to Tier 1 (flat string) validation errors — Tier 2 structured errors from `Rfc9457ValidationException` bypass this callback.
+Overrides the default Tier 1 validation error response. Receives the flat string array from the exception's `getResponse().message`, the request, and the HTTP status the exception carried (one of `validationStatuses`). Only applies to Tier 1 (flat string) validation errors — Tier 2 structured errors from `Rfc9457ValidationException` bypass this callback.
 
 ```typescript
 Rfc9457Module.forRoot({
-  validationExceptionMapper: (messages, request) => ({
+  validationExceptionMapper: (messages, request, status) => ({
     type: 'https://api.example.com/problems/validation-error',
     title: 'Validation Error',
-    status: 400,
+    status, // echo the detected status — do not hard-code it
     detail: 'One or more fields failed validation',
     violations: messages,
   }),
@@ -541,6 +574,8 @@ Response:
 
 To customize the Tier 1 response, use the `validationExceptionMapper` option described in the [Configuration](#configuration) section.
 
+**Custom status codes.** If you configure `ValidationPipe({ errorHttpStatusCode: 422 })` (or any other 4xx), declare that status in the [`validationStatuses`](#validationstatuses) module option (`validationStatuses: [400, 422]`) and the library produces the same structured validation response at that status, with the matching `title` (e.g. `Unprocessable Entity`). Without the declaration, the messages are still preserved — joined into `detail` — but the `errors` array is not emitted. Detection is an explicit opt-in per status because the validation output shape is indistinguishable from business exceptions constructed with message arrays.
+
 ### Tier 2 — Enhanced structured errors (opt-in)
 
 For rich, structured validation output with `property`, `constraints`, and nested `children` arrays, use the `createRfc9457ValidationPipeExceptionFactory` helper.
@@ -665,7 +700,23 @@ interface ApplyProblemDetailResponsesOptions {
    * instead of the base ProblemDetailDto. Default: [].
    */
   validationStatuses?: number[];
+
+  /**
+   * Return false to skip a controller (e.g. health-check controllers).
+   * Default: include all controllers.
+   */
+  filter?: (controller: DiscoveredController) => boolean;
 }
+```
+
+#### Excluding controllers
+
+Pass a `filter` to skip controllers you don't want documented with the default error responses — for example a health-check endpoint:
+
+```typescript
+applyProblemDetailResponses(app, {
+  filter: (controller) => controller.metatype?.name !== 'HealthController',
+});
 ```
 
 #### Documenting additional statuses
@@ -842,6 +893,7 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
 | `ValidationErrorDto`                 | Class     | Swagger DTO for a structured validation error (`property`, `constraints`, `children`) |
 | `applyProblemDetailResponses`        | Function  | Auto-applies `@ApiResponse` decorators to all controllers via `DiscoveryService`      |
 | `ApplyProblemDetailResponsesOptions` | Interface | Options for `applyProblemDetailResponses`                                             |
+| `DiscoveredController`               | Interface | Structural controller view passed to the `filter` option                              |
 
 ---
 

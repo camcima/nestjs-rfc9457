@@ -1,10 +1,12 @@
 import 'reflect-metadata';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   InternalServerErrorException,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
 import { Rfc9457ModuleOptions } from '../../src/rfc9457.interfaces';
@@ -141,6 +143,21 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(exception, mockRequest);
       expect(body.detail).toBeUndefined();
     });
+
+    it('joins a string[] message into a single detail string', () => {
+      const factory = createFactory();
+      const exception = new ConflictException({ message: ['a conflict', 'another conflict'] });
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.detail).toBe('a conflict; another conflict');
+    });
+
+    it('omits detail when a joined string[] message equals the default status phrase', () => {
+      const factory = createFactory();
+      const exception = new ConflictException({ message: ['Conflict'] });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(409);
+      expect(body.detail).toBeUndefined();
+    });
   });
 
   describe('typeBaseUri', () => {
@@ -221,6 +238,14 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(new BadRequestException(), mockRequest);
       expect(body.type).toBe('mailto:support@example.com');
     });
+
+    it('passes bare slug through unchanged when no typeBaseUri is configured', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ type: 'custom-problem', status: 400 }),
+      });
+      const { body } = factory.create(new BadRequestException(), mockRequest);
+      expect(body.type).toBe('custom-problem');
+    });
   });
 
   describe('instanceStrategy', () => {
@@ -234,6 +259,16 @@ describe('ProblemDetailsFactory', () => {
       const factory = createFactory({ instanceStrategy: 'request-uri' });
       const { body } = factory.create(new NotFoundException(), mockRequest);
       expect(body.instance).toBe('/api/users/42');
+    });
+
+    it('strips the query string for request-uri strategy', () => {
+      const factory = createFactory({ instanceStrategy: 'request-uri' });
+      const { body } = factory.create(new NotFoundException(), {
+        url: '/api/users?token=secret',
+        method: 'GET',
+      });
+      expect(body.instance).toBe('/api/users');
+      expect(JSON.stringify(body)).not.toContain('secret');
     });
 
     it('generates urn:uuid for uuid strategy', () => {
@@ -325,6 +360,16 @@ describe('ProblemDetailsFactory', () => {
       expect(body.retryAfter).toBe(30);
       expect(body.conflictingResource).toBe('/api/items/5');
     });
+
+    it('falls back to 500 when mapper status is out of range and exception is not HttpException', () => {
+      const factory = createFactory({
+        catchAllExceptions: true,
+        exceptionMapper: () => ({ title: 'Weird', status: 99 }),
+      });
+      const { status, body } = factory.create(new Error('boom'), mockRequest);
+      expect(status).toBe(500);
+      expect(body.status).toBe(500);
+    });
   });
 
   describe('@ProblemType decorator resolution', () => {
@@ -414,6 +459,21 @@ describe('ProblemDetailsFactory', () => {
       const { status } = factory.create(new NoStatusException(), mockRequest);
       expect(status).toBe(418);
     });
+
+    it('derives detail from message for @ProblemType-decorated plain Error', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { ProblemType } = require('../../src/problem-type.decorator');
+      @ProblemType({ type: 'https://example.com/db-error', title: 'DB Error', status: 503 })
+      class DbError extends Error {
+        constructor() {
+          super('connection refused');
+        }
+      }
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(new DbError(), mockRequest);
+      expect(status).toBe(503);
+      expect(body.detail).toBe('connection refused');
+    });
   });
 
   describe('validation handling', () => {
@@ -429,6 +489,88 @@ describe('ProblemDetailsFactory', () => {
       expect(body.title).toBe('Bad Request');
       expect(body.detail).toBe('Request validation failed');
       expect(body.errors).toEqual(['email must be an email', 'age must not be less than 0']);
+    });
+
+    it('maps Tier 1 validation at a custom errorHttpStatusCode when declared in validationStatuses', () => {
+      const factory = createFactory({ validationStatuses: [400, 422] });
+      const exception = new UnprocessableEntityException({
+        message: ['email must be an email'],
+        error: 'Unprocessable Entity',
+      });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(422);
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toEqual(['email must be an email']);
+    });
+
+    it('does not classify undeclared statuses as validation — messages survive in detail', () => {
+      // Default validationStatuses is [400]: a 422 ValidationPipe shape falls
+      // through to default HttpException handling with the messages joined.
+      const factory = createFactory();
+      const exception = new UnprocessableEntityException({
+        message: ['email must be an email', 'age must not be less than 0'],
+        error: 'Unprocessable Entity',
+      });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(422);
+      expect(body.title).toBe('Unprocessable Entity');
+      expect(body.detail).toBe('email must be an email; age must not be less than 0');
+      expect(body.errors).toBeUndefined();
+    });
+
+    it('does not misclassify business 4xx array-constructor exceptions as validation', () => {
+      // new ConflictException([...]) auto-produces { message: [...], error: 'Conflict' } —
+      // the same shape as ValidationPipe output. The allow-list keeps it out of
+      // validation handling (409 is not a declared validation status).
+      const factory = createFactory({
+        validationStatuses: [400, 422],
+        validationExceptionMapper: (messages, _request, status) => ({
+          status,
+          title: 'Validation Failed',
+          violations: messages,
+        }),
+      });
+      const exception = new ConflictException(['order already shipped', 'cannot cancel']);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(409);
+      expect(body.title).toBe('Conflict');
+      expect(body.detail).toBe('order already shipped; cannot cancel');
+      expect(body.violations).toBeUndefined();
+    });
+
+    it('passes the detected status to validationExceptionMapper', () => {
+      const mapper = jest.fn((messages: string[], _request: unknown, status: number) => ({
+        status,
+        title: 'Validation Failed',
+        violations: messages,
+      }));
+      const factory = createFactory({
+        validationStatuses: [400, 422],
+        validationExceptionMapper: mapper,
+      });
+      const exception = new UnprocessableEntityException({
+        message: ['email must be an email'],
+        error: 'Unprocessable Entity',
+      });
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(mapper).toHaveBeenCalledWith(['email must be an email'], mockRequest, 422);
+      expect(status).toBe(422);
+      expect(body.violations).toEqual(['email must be an email']);
+    });
+
+    it('matches the status phrase case-insensitively (418 teapot casing)', () => {
+      // Nest's phrase for 418 is "I'm a teapot" while Node's STATUS_CODES has
+      // "I'm a Teapot" — detection must not be defeated by the casing mismatch.
+      const factory = createFactory({ validationStatuses: [418] });
+      const exception = new HttpException(
+        { message: ['short and stout'], error: "I'm a teapot", statusCode: 418 },
+        418,
+      );
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(418);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toEqual(['short and stout']);
     });
 
     it('maps Tier 2 validation (Rfc9457ValidationException) to structured output', () => {
@@ -525,6 +667,97 @@ describe('ProblemDetailsFactory', () => {
       const exception = new Rfc9457ValidationException([]);
       const { body } = factory.create(exception, mockRequest);
       expect(body.title).toBe('Mapper Wins');
+    });
+
+    it('does not mutate the object returned by validationExceptionMapper', () => {
+      const shared = Object.freeze({ status: 400, title: 'Validation Failed' });
+      const factory = createFactory({ validationExceptionMapper: () => shared as any });
+      const exception = new BadRequestException({ message: ['x'], error: 'Bad Request' });
+      expect(() => factory.create(exception, mockRequest)).not.toThrow();
+    });
+  });
+
+  describe('edge-case branches', () => {
+    it('works when constructed without options (default parameter)', () => {
+      const factory = new ProblemDetailsFactory();
+      const { status, body } = factory.create(new NotFoundException('gone'), mockRequest);
+      expect(status).toBe(404);
+      expect(body.type).toBe('about:blank');
+      expect(body.detail).toBe('gone');
+    });
+
+    it('handles thrown objects with no constructor (null prototype)', () => {
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(Object.create(null), mockRequest);
+      expect(status).toBe(500);
+      expect(body.title).toBe('Internal Server Error');
+    });
+
+    it('omits detail for a decorated plain Error with an empty message', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { ProblemType } = require('../../src/problem-type.decorator');
+      @ProblemType({ type: 'https://example.com/silent', title: 'Silent', status: 502 })
+      class SilentError extends Error {
+        constructor() {
+          super('');
+        }
+      }
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(new SilentError(), mockRequest);
+      expect(status).toBe(502);
+      expect(body.title).toBe('Silent');
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('omits detail for a decorated non-Error object', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { ProblemType } = require('../../src/problem-type.decorator');
+      @ProblemType({ type: 'https://example.com/weird', title: 'Weird', status: 500 })
+      class WeirdThrowable {}
+      const factory = createFactory({ catchAllExceptions: true });
+      const { status, body } = factory.create(new WeirdThrowable(), mockRequest);
+      expect(status).toBe(500);
+      expect(body.type).toBe('https://example.com/weird');
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('falls back to "Unknown Error" title for a non-standard HttpException status', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(new HttpException('odd', 599), mockRequest);
+      expect(status).toBe(599);
+      expect(body.title).toBe('Unknown Error');
+      expect(body.detail).toBe('odd');
+    });
+
+    it('fills "Unknown Error" title and unknown-error slug when mapper returns a bare non-standard status', () => {
+      const factory = createFactory({
+        typeBaseUri: 'https://api.example.com/problems',
+        exceptionMapper: () => ({ status: 599 }),
+      });
+      const { status, body } = factory.create(new NotFoundException(), mockRequest);
+      expect(status).toBe(599);
+      expect(body.title).toBe('Unknown Error');
+      expect(body.type).toBe('https://api.example.com/problems/unknown-error');
+    });
+
+    it('omits instance for an unrecognized instanceStrategy value', () => {
+      const factory = createFactory({ instanceStrategy: 'bogus' as any });
+      const { body } = factory.create(new NotFoundException(), mockRequest);
+      expect(body.instance).toBeUndefined();
+    });
+
+    it('omits detail when a string response equals the default status phrase', () => {
+      const factory = createFactory();
+      const { body } = factory.create(new HttpException('Forbidden', 403), mockRequest);
+      expect(body.detail).toBeUndefined();
+      expect(body.title).toBe('Forbidden');
+    });
+
+    it('omits detail for a null exception response', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(new HttpException(null as any, 400), mockRequest);
+      expect(status).toBe(400);
+      expect(body.detail).toBeUndefined();
     });
   });
 

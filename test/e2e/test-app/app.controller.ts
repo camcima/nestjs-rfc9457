@@ -39,6 +39,12 @@ export class AppController {
     return 'ok';
   }
 
+  @Post('validate-422')
+  @UsePipes(new ValidationPipe({ errorHttpStatusCode: 422 }))
+  validate422(@Body() _dto: CreateUserDto): string {
+    return 'ok';
+  }
+
   @Get('unhandled')
   unhandled(): never {
     throw new Error('Unexpected internal error');

@@ -2,12 +2,14 @@ import { Type } from '@nestjs/common';
 
 /**
  * Minimal request context used by the factory and callbacks.
- * Compatible with both Express and Fastify request objects.
+ * Declares only the members the library itself relies on. Both Express's
+ * `Request` and Fastify's `FastifyRequest` are structurally assignable to it.
+ * To read adapter-specific fields inside a callback, narrow to the concrete
+ * request type (e.g. `request as unknown as Request`).
  */
 export interface Rfc9457Request {
   url: string;
   method: string;
-  [key: string]: unknown;
 }
 
 /**
@@ -47,8 +49,33 @@ export interface Rfc9457ModuleOptions {
   typeBaseUri?: string;
   instanceStrategy?: InstanceStrategy;
   catchAllExceptions?: boolean;
+  /**
+   * HTTP status codes at which `ValidationPipe` default output (an
+   * `HttpException` whose response is `{ message: string[], error: <status
+   * phrase> }`) is treated as a Tier 1 validation error. Default: `[400]`.
+   *
+   * Set this when you configure `ValidationPipe({ errorHttpStatusCode })`,
+   * e.g. `validationStatuses: [400, 422]`. Detection is an explicit
+   * allow-list because the validation response shape is indistinguishable
+   * from business `HttpException`s constructed with a message array (NestJS
+   * sets the `error` field to the status phrase in both cases) — declare
+   * only statuses your application reserves for validation. At undeclared
+   * statuses the messages are preserved by joining them into `detail`.
+   */
+  validationStatuses?: number[];
   exceptionMapper?: (exception: unknown, request: Rfc9457Request) => ProblemDetail | null;
-  validationExceptionMapper?: (messages: string[], request: Rfc9457Request) => ProblemDetail;
+  /**
+   * Overrides the default Tier 1 validation response. Receives the flat
+   * message array, the request, and the HTTP status the exception carried
+   * (one of `validationStatuses`). Do not hard-code `status` in the result
+   * if you declare multiple validation statuses — echo the `status`
+   * parameter instead.
+   */
+  validationExceptionMapper?: (
+    messages: string[],
+    request: Rfc9457Request,
+    status: number,
+  ) => ProblemDetail;
   /**
    * Called when a non-`HttpException` reaches the filter's catch-all branch
    * (i.e. `catchAllExceptions: true` AND the `exceptionMapper` returned `null`).
