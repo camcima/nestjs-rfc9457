@@ -235,7 +235,7 @@ describe('applyProblemDetailResponses', () => {
     // the helper must skip them instead of passing undefined to the
     // decorator factories. Faked at the DiscoveryService seam because a
     // real Nest controller always has one.
-    const filter = jest.fn().mockReturnValue(true);
+    const filter = vi.fn().mockReturnValue(true);
     const fakeDiscovery = { getControllers: () => [{ metatype: null, name: 'NoMeta' }] };
     const fakeApp = { get: () => fakeDiscovery } as unknown as INestApplication;
 
