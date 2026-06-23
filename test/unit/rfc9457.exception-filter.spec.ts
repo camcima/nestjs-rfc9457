@@ -3,14 +3,15 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { Rfc9457ExceptionFilter } from '../../src/rfc9457.exception-filter';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
 import { Rfc9457ModuleOptions } from '../../src/rfc9457.interfaces';
+import type { MockInstance } from 'vitest';
 
 function createMocks(options: Rfc9457ModuleOptions = {}) {
   const mockResponse = {};
   const mockRequest = { url: '/test', method: 'GET' };
 
   const mockHttpAdapter = {
-    setHeader: jest.fn(),
-    reply: jest.fn(),
+    setHeader: vi.fn(),
+    reply: vi.fn(),
   };
 
   const adapterHost = { httpAdapter: mockHttpAdapter } as unknown as HttpAdapterHost;
@@ -148,10 +149,10 @@ describe('Rfc9457ExceptionFilter', () => {
   });
 
   describe('unhandled exception observability', () => {
-    let loggerErrorSpy: jest.SpyInstance;
+    let loggerErrorSpy: MockInstance;
 
     beforeEach(() => {
-      loggerErrorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     });
 
     afterEach(() => {
@@ -209,7 +210,7 @@ describe('Rfc9457ExceptionFilter', () => {
     });
 
     it('defers to onUnhandled callback when provided (no default log)', () => {
-      const onUnhandled = jest.fn();
+      const onUnhandled = vi.fn();
       const { filter, mockHost, mockRequest } = createMocks({
         catchAllExceptions: true,
         onUnhandled,
@@ -223,7 +224,7 @@ describe('Rfc9457ExceptionFilter', () => {
     });
 
     it('onUnhandled does not prevent the generic problem-details response', () => {
-      const onUnhandled = jest.fn();
+      const onUnhandled = vi.fn();
       const { filter, mockHost, mockHttpAdapter } = createMocks({
         catchAllExceptions: true,
         onUnhandled,

@@ -8,8 +8,8 @@ import { Injectable, Module } from '@nestjs/common';
 
 const mockAdapterHost = {
   httpAdapter: {
-    setHeader: jest.fn(),
-    reply: jest.fn(),
+    setHeader: vi.fn(),
+    reply: vi.fn(),
   },
 };
 

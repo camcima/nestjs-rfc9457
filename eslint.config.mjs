@@ -8,7 +8,7 @@ export default tseslint.config(
       'dist/**',
       'coverage/**',
       'commitlint.config.js',
-      'jest.config.ts',
+      'vitest.config.ts',
       'eslint.config.mjs',
     ],
   },
@@ -22,7 +22,7 @@ export default tseslint.config(
       },
       globals: {
         ...globals.node,
-        ...globals.jest,
+        ...globals.vitest,
       },
     },
     rules: {
