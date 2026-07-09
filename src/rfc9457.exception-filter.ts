@@ -52,9 +52,7 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
       if (mapped) {
         const response = ctx.getResponse();
         const { status, body } = this.factory.createFromMapped(mapped, exception, request);
-        const httpAdapter = this.adapterHost.httpAdapter;
-        httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
-        httpAdapter.reply(response, body, status);
+        this.sendProblem(response, body, status, exception);
         return;
       }
     }
@@ -100,7 +98,30 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     const response = ctx.getResponse();
     // skipMapper: the filter already ran the mapper above and it returned null
     const { status, body } = this.factory.create(exception, request, { skipMapper: true });
+    this.sendProblem(response, body, status, exception);
+  }
+
+  /**
+   * Writes the problem response unless headers are already committed
+   * (e.g. an exception thrown mid-stream). Mirrors Nest's own
+   * BaseExceptionFilter: when the response cannot be safely replaced,
+   * log the original exception and end the connection.
+   */
+  private sendProblem(
+    response: unknown,
+    body: ProblemDetail,
+    status: number,
+    exception: unknown,
+  ): void {
     const httpAdapter = this.adapterHost.httpAdapter;
+    if (httpAdapter.isHeadersSent(response)) {
+      this.logger.error(
+        'Cannot send problem details: headers already sent; ending response',
+        exception instanceof Error ? exception.stack : String(exception),
+      );
+      httpAdapter.end(response);
+      return;
+    }
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
     httpAdapter.reply(response, body, status);
   }

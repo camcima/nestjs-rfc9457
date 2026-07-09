@@ -12,6 +12,8 @@ function createMocks(options: Rfc9457ModuleOptions = {}) {
   const mockHttpAdapter = {
     setHeader: vi.fn(),
     reply: vi.fn(),
+    isHeadersSent: vi.fn().mockReturnValue(false),
+    end: vi.fn(),
   };
 
   const adapterHost = { httpAdapter: mockHttpAdapter } as unknown as HttpAdapterHost;
@@ -333,5 +335,40 @@ describe('Rfc9457ExceptionFilter', () => {
       const responseBody = mockHttpAdapter.reply.mock.calls[0][1];
       expect(JSON.stringify(responseBody)).not.toContain('secret-sink-credentials');
     });
+  });
+});
+
+describe('committed response guard', () => {
+  let loggerErrorSpy: MockInstance;
+
+  beforeEach(() => {
+    loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    loggerErrorSpy.mockRestore();
+  });
+
+  it('ends the response without writing when headers are already sent', () => {
+    const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks();
+    mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+    filter.catch(new NotFoundException('too late'), mockHost);
+    expect(mockHttpAdapter.setHeader).not.toHaveBeenCalled();
+    expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    expect(mockHttpAdapter.end).toHaveBeenCalledWith(mockResponse);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('headers already sent'),
+      expect.any(String),
+    );
+  });
+
+  it('guards the mapper path too', () => {
+    const { filter, mockHost, mockHttpAdapter } = createMocks({
+      exceptionMapper: () => ({ status: 503, title: 'Down' }),
+    });
+    mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+    filter.catch(new Error('mapped but committed'), mockHost);
+    expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    expect(mockHttpAdapter.end).toHaveBeenCalled();
   });
 });
