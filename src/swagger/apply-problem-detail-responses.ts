@@ -55,6 +55,11 @@ const appliedStatuses = new WeakMap<object, Set<number>>();
  * All statuses use the base `ProblemDetailDto` by default. To document Tier 2
  * structured validation errors, pass `validationStatuses: [400]`.
  *
+ * Idempotent per controller and status: it is safe to call this more than once
+ * (lazy document factories invoked repeatedly, hot reload, multiple
+ * `SwaggerModule.setup()` calls) — for a given controller and status, only the
+ * first call's options are applied.
+ *
  * Call this inside the lazy document factory passed to `SwaggerModule.setup()`
  * so that decorators are attached before the OpenAPI spec is generated:
  *
