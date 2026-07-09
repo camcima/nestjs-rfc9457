@@ -190,7 +190,17 @@ export class ProblemDetailsFactory {
     if (strategy === 'none') return undefined;
     if (strategy === 'request-uri') return request.url.split('?')[0];
     if (strategy === 'uuid') return `urn:uuid:${randomUUID()}`;
-    if (typeof strategy === 'function') return strategy(request, exception);
+    if (typeof strategy === 'function') {
+      try {
+        return strategy(request, exception);
+      } catch (strategyError) {
+        this.logger.error(
+          'instanceStrategy callback threw; omitting instance',
+          strategyError instanceof Error ? strategyError.stack : undefined,
+        );
+        return undefined;
+      }
+    }
     return undefined;
   }
 
@@ -251,7 +261,15 @@ export class ProblemDetailsFactory {
       const response = httpException.getResponse() as any;
       const messages: string[] = response.message;
       if (this.options.validationExceptionMapper) {
-        return { ...this.options.validationExceptionMapper(messages, request, status) };
+        try {
+          return { ...this.options.validationExceptionMapper(messages, request, status) };
+        } catch (mapperError) {
+          // Fall through to the default Tier 1 body below.
+          this.logger.error(
+            'validationExceptionMapper threw; falling back to the default validation problem',
+            mapperError instanceof Error ? mapperError.stack : undefined,
+          );
+        }
       }
       return {
         status,

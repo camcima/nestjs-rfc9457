@@ -871,5 +871,39 @@ describe('ProblemDetailsFactory', () => {
       expect(body.detail).toBe('User 42 not found');
       expect(loggerErrorSpy).toHaveBeenCalled();
     });
+
+    it('omits instance when a custom instanceStrategy throws', () => {
+      const factory = createFactory({
+        instanceStrategy: () => {
+          throw new Error('strategy bug');
+        },
+      });
+      const { status, body } = factory.create(new NotFoundException('nope'), mockRequest);
+      expect(status).toBe(404);
+      expect(body.instance).toBeUndefined();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('instanceStrategy'),
+        expect.any(String),
+      );
+    });
+
+    it('falls back to the default Tier 1 validation body when validationExceptionMapper throws', () => {
+      const factory = createFactory({
+        validationExceptionMapper: () => {
+          throw new Error('validation mapper bug');
+        },
+      });
+      // Simulate ValidationPipe default output: BadRequestException with
+      // { message: string[], error: 'Bad Request' }.
+      const exception = new BadRequestException(['email must be an email']);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toEqual(['email must be an email']);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('validationExceptionMapper'),
+        expect.any(String),
+      );
+    });
   });
 });
