@@ -828,6 +828,18 @@ describe('ProblemDetailsFactory', () => {
       expect(status).toBe(503);
       expect(loggerWarnSpy).not.toHaveBeenCalled();
     });
+
+    it('emits an out-of-range HttpException status unclamped without a false warning', () => {
+      // No mapper: create() step 4 copies exception.getStatus() (302) straight
+      // into result.status, so the fallback computed in resolveStatus is also
+      // 302. The status is emitted unchanged (framework semantics), and no
+      // warning should fire since nothing was actually ignored.
+      const factory = createFactory();
+      const { status, body } = factory.create(new HttpException('redirect-ish', 302), mockRequest);
+      expect(status).toBe(302);
+      expect(body.status).toBe(302);
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('unknown exception fallback', () => {

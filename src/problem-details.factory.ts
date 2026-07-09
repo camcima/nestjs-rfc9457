@@ -154,21 +154,26 @@ export class ProblemDetailsFactory {
   }
 
   private resolveStatus(result: ProblemDetail, exception: unknown): number {
+    const fallback = exception instanceof HttpException ? exception.getStatus() : 500;
     if (typeof result.status === 'number') {
       if (result.status >= 400 && result.status < 600) {
         return result.status;
       }
       // A problem details response is an error response (RFC 9457). A
       // non-error status here is a configuration bug (mapper/decorator
-      // typo) — surface it in logs and fall back rather than emit it.
-      this.logger.warn(
-        `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599)`,
-      );
+      // typo) — surface it in logs and fall back rather than emit it. Only
+      // warn when the fallback actually differs from what was supplied:
+      // e.g. `new HttpException('x', 302)` with no mapper copies 302 into
+      // result.status at create() step 4, and the fallback (302 again) would
+      // be emitted unchanged — warning there would falsely claim the status
+      // was ignored.
+      if (result.status !== fallback) {
+        this.logger.warn(
+          `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
+        );
+      }
     }
-    if (exception instanceof HttpException) {
-      return exception.getStatus();
-    }
-    return 500;
+    return fallback;
   }
 
   private isUriReference(value: string): boolean {
