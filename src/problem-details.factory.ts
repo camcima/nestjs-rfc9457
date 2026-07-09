@@ -145,6 +145,11 @@ export class ProblemDetailsFactory {
       result.instance = instance;
     }
 
+    // Production hardening: strip detail from server-error responses.
+    if (this.options.suppress5xxDetail && httpStatus >= 500) {
+      delete result.detail;
+    }
+
     return { status: httpStatus, body: result };
   }
 

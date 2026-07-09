@@ -63,6 +63,16 @@ export interface Rfc9457ModuleOptions {
    * statuses the messages are preserved by joining them into `detail`.
    */
   validationStatuses?: number[];
+  /**
+   * When true, the `detail` member is stripped from every problem response
+   * with a 5xx status, regardless of its source (HttpException message,
+   * mapper result, or decorator metadata). Blunt by design: a production
+   * hardening switch guaranteeing no internal error text reaches clients.
+   *
+   * Default: false — matching NestJS semantics, where an explicit
+   * `HttpException` message is client-facing by design.
+   */
+  suppress5xxDetail?: boolean;
   exceptionMapper?: (exception: unknown, request: Rfc9457Request) => ProblemDetail | null;
   /**
    * Overrides the default Tier 1 validation response. Receives the flat

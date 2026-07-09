@@ -993,4 +993,38 @@ describe('ProblemDetailsFactory', () => {
       );
     });
   });
+
+  describe('suppress5xxDetail', () => {
+    it('strips detail from 5xx responses when enabled', () => {
+      const factory = createFactory({ suppress5xxDetail: true });
+      const { status, body } = factory.create(
+        new InternalServerErrorException('database authentication failed'),
+        mockRequest,
+      );
+      expect(status).toBe(500);
+      expect(body.detail).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain('database authentication failed');
+    });
+
+    it('keeps detail on 4xx responses when enabled', () => {
+      const factory = createFactory({ suppress5xxDetail: true });
+      const { body } = factory.create(new NotFoundException('User 42 not found'), mockRequest);
+      expect(body.detail).toBe('User 42 not found');
+    });
+
+    it('strips mapper-provided detail on 5xx too (blunt by design)', () => {
+      const factory = createFactory({
+        suppress5xxDetail: true,
+        exceptionMapper: () => ({ status: 503, title: 'Down', detail: 'try later' }),
+      });
+      const { body } = factory.create(new Error('boom'), mockRequest);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('is off by default, preserving NestJS semantics', () => {
+      const factory = createFactory();
+      const { body } = factory.create(new InternalServerErrorException('DB down'), mockRequest);
+      expect(body.detail).toBe('DB down');
+    });
+  });
 });
