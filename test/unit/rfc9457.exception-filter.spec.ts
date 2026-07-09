@@ -324,6 +324,30 @@ describe('Rfc9457ExceptionFilter', () => {
       expect(messages).toContainEqual(expect.stringContaining('original failure'));
     });
 
+    it('contains a rejected promise from an async onUnhandled callback without crashing', async () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: (async () => {
+          throw new Error('async sink failure');
+        }) as unknown as (exception: unknown, request: any) => void,
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      // The reply must be sent synchronously, before the rejected promise
+      // has a chance to settle.
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 500, title: 'Internal Server Error' }),
+        500,
+      );
+
+      // Let the rejected promise's .catch() handler run.
+      await new Promise((r) => setImmediate(r));
+
+      const messages = loggerErrorSpy.mock.calls.map((call) => call[0]);
+      expect(messages).toContainEqual(expect.stringContaining('onUnhandled callback rejected'));
+      expect(messages).toContainEqual(expect.stringContaining('original failure'));
+    });
+
     it('never includes onUnhandled callback error text in the response body', () => {
       const { filter, mockHost, mockHttpAdapter } = createMocks({
         catchAllExceptions: true,

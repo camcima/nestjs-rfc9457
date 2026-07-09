@@ -77,7 +77,28 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
       if (this.options.onUnhandled) {
         const ctx = host.switchToHttp();
         try {
-          this.options.onUnhandled(exception, ctx.getRequest());
+          const maybeThenable = this.options.onUnhandled(exception, ctx.getRequest()) as unknown;
+          // onUnhandled is typed `=> void`, but TypeScript allows an `async`
+          // callback there too (Promise<void> is assignable to void). If the
+          // callback returned a thenable, attach a rejection handler so a
+          // rejected promise never becomes an unhandled rejection and crashes
+          // the process. The response write below must stay synchronous, so
+          // this is intentionally not awaited.
+          if (
+            maybeThenable !== null &&
+            (typeof maybeThenable === 'object' || typeof maybeThenable === 'function') &&
+            typeof (maybeThenable as PromiseLike<unknown>).then === 'function'
+          ) {
+            Promise.resolve(maybeThenable as PromiseLike<unknown>).catch(
+              (callbackError: unknown) => {
+                this.logger.error(
+                  'onUnhandled callback rejected; falling back to default logging',
+                  callbackError instanceof Error ? callbackError.stack : undefined,
+                );
+                this.logOriginal(exception);
+              },
+            );
+          }
         } catch (callbackError) {
           // onUnhandled is observability-only: its failure must never replace
           // the response. Log the callback failure AND the original exception
