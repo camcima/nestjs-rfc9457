@@ -243,4 +243,22 @@ describe('applyProblemDetailResponses', () => {
     // The wrapper was skipped before the filter could run.
     expect(filter).not.toHaveBeenCalled();
   });
+
+  it('is idempotent: calling twice does not duplicate response metadata', async () => {
+    const app = await createApp();
+
+    applyProblemDetailResponses(app);
+    applyProblemDetailResponses(app);
+
+    const config = new DocumentBuilder().build();
+    const document = SwaggerModule.createDocument(app, config);
+
+    const responses = document.paths['/alpha']?.get?.responses as any;
+    // @nestjs/swagger >=11.4 concatenates descriptions for duplicate statuses,
+    // so strict equality catches any double application.
+    expect(responses['400'].description).toBe('Bad Request');
+    expect(responses['500'].description).toBe('Internal Server Error');
+
+    await app.close();
+  });
 });
