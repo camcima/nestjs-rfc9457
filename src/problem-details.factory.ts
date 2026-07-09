@@ -245,10 +245,11 @@ export class ProblemDetailsFactory {
     // Tier 2: Rfc9457ValidationException — safe to use instanceof since the class
     // no longer imports class-validator at runtime (validationErrors is unknown[]).
     if (exception instanceof Rfc9457ValidationException) {
+      const status = exception.getStatus();
       const seen = new WeakSet<object>();
       return {
-        status: 400,
-        title: 'Bad Request',
+        status,
+        title: http.STATUS_CODES[status] || 'Unknown Error',
         detail: 'Request validation failed',
         errors: exception.validationErrors
           .map((err) => this.flattenValidationError(err, seen))
