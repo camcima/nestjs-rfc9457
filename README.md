@@ -692,7 +692,7 @@ app.useGlobalPipes(
 
 `createRfc9457ValidationPipeExceptionFactory` throws a `RangeError` if `status` is outside the 400–599 error range.
 
-> **Breaking change (vs 1.x):** `Rfc9457ValidationException` now extends `HttpException` rather than `BadRequestException`, so its status is configurable. Code that narrows on `instanceof BadRequestException` no longer matches; narrow on `Rfc9457ValidationException` (or `HttpException`) instead.
+> **Breaking change (vs earlier releases (<=0.4.x)):** `Rfc9457ValidationException` now extends `HttpException` rather than `BadRequestException`, so its status is configurable. Code that narrows on `instanceof BadRequestException` no longer matches; narrow on `Rfc9457ValidationException` (or `HttpException`) instead.
 
 ---
 
