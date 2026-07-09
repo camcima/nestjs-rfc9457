@@ -148,6 +148,63 @@ describe('Rfc9457ExceptionFilter', () => {
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
   });
 
+  describe('exceptionMapper containment', () => {
+    let loggerErrorSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerErrorSpy.mockRestore();
+    });
+
+    it('falls back to standard HttpException resolution when the mapper throws', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        exceptionMapper: () => {
+          throw new Error('mapper bug');
+        },
+      });
+      filter.catch(new NotFoundException('Not here'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 404, title: 'Not Found', detail: 'Not here' }),
+        404,
+      );
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exceptionMapper threw'),
+        expect.any(String),
+      );
+    });
+
+    it('never includes mapper error text in the response body', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        exceptionMapper: () => {
+          throw new Error('secret-mapper-internals');
+        },
+      });
+      filter.catch(new TypeError('boom'), mockHost);
+      const responseBody = mockHttpAdapter.reply.mock.calls[0][1];
+      expect(JSON.stringify(responseBody)).not.toContain('secret-mapper-internals');
+    });
+
+    it('delegates to super.catch when the mapper throws for a non-HttpException without catchAllExceptions', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: false,
+        exceptionMapper: () => {
+          throw new Error('mapper bug');
+        },
+      });
+      try {
+        filter.catch(new TypeError('unexpected'), mockHost);
+      } catch {
+        // Expected: BaseExceptionFilter.catch fails in test environment
+      }
+      expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    });
+  });
+
   describe('unhandled exception observability', () => {
     let loggerErrorSpy: MockInstance;
 

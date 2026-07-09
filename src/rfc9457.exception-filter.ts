@@ -2,7 +2,7 @@ import { ArgumentsHost, Catch, HttpException, Inject, Logger } from '@nestjs/com
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import { ProblemDetailsFactory } from './problem-details.factory';
 import { RFC9457_MODULE_OPTIONS, PROBLEM_CONTENT_TYPE } from './rfc9457.constants';
-import { Rfc9457ModuleOptions } from './rfc9457.interfaces';
+import { ProblemDetail, Rfc9457ModuleOptions } from './rfc9457.interfaces';
 
 @Catch()
 export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
@@ -38,7 +38,17 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     if (this.options.exceptionMapper) {
       const ctx = host.switchToHttp();
       const request = ctx.getRequest();
-      const mapped = this.options.exceptionMapper(exception, request);
+      let mapped: ProblemDetail | null = null;
+      try {
+        mapped = this.options.exceptionMapper(exception, request);
+      } catch (mapperError) {
+        // A throwing mapper is an application bug, but the error path must
+        // stay total: log it and continue with standard resolution.
+        this.logger.error(
+          'exceptionMapper threw while mapping an exception; continuing with standard resolution',
+          mapperError instanceof Error ? mapperError.stack : undefined,
+        );
+      }
       if (mapped) {
         const response = ctx.getResponse();
         const { status, body } = this.factory.createFromMapped(mapped, exception, request);

@@ -5,11 +5,13 @@ import {
   ForbiddenException,
   HttpException,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
 import { Rfc9457ModuleOptions } from '../../src/rfc9457.interfaces';
+import type { MockInstance } from 'vitest';
 
 function createFactory(options: Rfc9457ModuleOptions = {}): ProblemDetailsFactory {
   return new ProblemDetailsFactory(options);
@@ -841,6 +843,33 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(new CustomValidationException(), mockRequest);
       expect(body.type).toBe('https://example.com/custom-validation');
       expect(body.errors).toBeUndefined();
+    });
+  });
+
+  describe('callback containment', () => {
+    let loggerErrorSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerErrorSpy.mockRestore();
+    });
+
+    it('create() falls through to standard resolution when exceptionMapper throws', () => {
+      const factory = createFactory({
+        exceptionMapper: () => {
+          throw new Error('mapper bug');
+        },
+      });
+      const { status, body } = factory.create(
+        new NotFoundException('User 42 not found'),
+        mockRequest,
+      );
+      expect(status).toBe(404);
+      expect(body.detail).toBe('User 42 not found');
+      expect(loggerErrorSpy).toHaveBeenCalled();
     });
   });
 });

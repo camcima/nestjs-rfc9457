@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import {
@@ -13,6 +13,8 @@ import { toSlug } from './utils/slug';
 
 @Injectable()
 export class ProblemDetailsFactory {
+  private readonly logger = new Logger(ProblemDetailsFactory.name);
+
   constructor(
     @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions = {},
   ) {}
@@ -51,9 +53,16 @@ export class ProblemDetailsFactory {
     // Step 1: exceptionMapper callback.
     // Skipped when the filter already ran the mapper (to avoid double invocation).
     if (!options?.skipMapper && this.options.exceptionMapper) {
-      const mapped = this.options.exceptionMapper(exception, request);
-      if (mapped) {
-        result = { ...mapped };
+      try {
+        const mapped = this.options.exceptionMapper(exception, request);
+        if (mapped) {
+          result = { ...mapped };
+        }
+      } catch (mapperError) {
+        this.logger.error(
+          'exceptionMapper threw while mapping an exception; continuing with standard resolution',
+          mapperError instanceof Error ? mapperError.stack : undefined,
+        );
       }
     }
 
