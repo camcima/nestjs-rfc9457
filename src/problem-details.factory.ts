@@ -237,13 +237,14 @@ export class ProblemDetailsFactory {
     // Tier 2: Rfc9457ValidationException — safe to use instanceof since the class
     // no longer imports class-validator at runtime (validationErrors is unknown[]).
     if (exception instanceof Rfc9457ValidationException) {
-      const validationErrors = exception.validationErrors;
-      // Rfc9457ValidationException extends BadRequestException, so it is always 400.
+      const seen = new WeakSet<object>();
       return {
         status: 400,
         title: 'Bad Request',
         detail: 'Request validation failed',
-        errors: validationErrors.map((err) => this.flattenValidationError(err)),
+        errors: exception.validationErrors
+          .map((err) => this.flattenValidationError(err, seen))
+          .filter((err): err is Record<string, unknown> => err !== null),
       };
     }
 
@@ -313,14 +314,46 @@ export class ProblemDetailsFactory {
     return Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string');
   }
 
-  private flattenValidationError(error: any): any {
-    const result: any = { property: error.property };
-    if (error.constraints) {
-      result.constraints = error.constraints;
+  /**
+   * Defensively flattens one validation-error entry. The public
+   * Rfc9457ValidationException accepts unknown[], so entries may be anything:
+   * skip non-objects, keep only a string `property`, a string-valued
+   * `constraints` map, and array `children`; the shared `seen` set breaks
+   * cycles. Returns null for entries with no salvageable content shape.
+   */
+  private flattenValidationError(
+    error: unknown,
+    seen: WeakSet<object>,
+  ): Record<string, unknown> | null {
+    if (typeof error !== 'object' || error === null || seen.has(error)) {
+      return null;
     }
-    if (error.children && error.children.length > 0) {
-      result.children = error.children.map((child: any) => this.flattenValidationError(child));
+    seen.add(error);
+    const source = error as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    if (typeof source.property === 'string') {
+      result.property = source.property;
     }
-    return result;
+    if (
+      typeof source.constraints === 'object' &&
+      source.constraints !== null &&
+      !Array.isArray(source.constraints)
+    ) {
+      const constraints = Object.fromEntries(
+        Object.entries(source.constraints).filter(([, value]) => typeof value === 'string'),
+      );
+      if (Object.keys(constraints).length > 0) {
+        result.constraints = constraints;
+      }
+    }
+    if (Array.isArray(source.children) && source.children.length > 0) {
+      const children = source.children
+        .map((child) => this.flattenValidationError(child, seen))
+        .filter((child): child is Record<string, unknown> => child !== null);
+      if (children.length > 0) {
+        result.children = children;
+      }
+    }
+    return Object.keys(result).length > 0 ? result : null;
   }
 }

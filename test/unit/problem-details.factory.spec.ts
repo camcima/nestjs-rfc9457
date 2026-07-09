@@ -663,6 +663,54 @@ describe('ProblemDetailsFactory', () => {
     });
   });
 
+  describe('Tier 2 malformed validation errors', () => {
+    it('skips null, primitive, and string entries instead of crashing', () => {
+      const factory = createFactory();
+      const exception = new Rfc9457ValidationException([null, 42, 'oops', undefined]);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      expect(body.errors).toEqual([]);
+    });
+
+    it('drops non-string constraint values and non-array children', () => {
+      const factory = createFactory();
+      const exception = new Rfc9457ValidationException([
+        {
+          property: 'email',
+          constraints: { isEmail: 'must be an email', bogus: 123 },
+          children: 'not-an-array',
+        },
+      ]);
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.errors).toEqual([
+        { property: 'email', constraints: { isEmail: 'must be an email' } },
+      ]);
+    });
+
+    it('breaks cycles in children without infinite recursion', () => {
+      const factory = createFactory();
+      const cyclic: any = { property: 'a', constraints: { isDefined: 'a required' }, children: [] };
+      cyclic.children.push(cyclic);
+      const exception = new Rfc9457ValidationException([cyclic]);
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.errors).toEqual([{ property: 'a', constraints: { isDefined: 'a required' } }]);
+    });
+
+    it('still flattens valid class-validator errors with nested children', () => {
+      const factory = createFactory();
+      const child = { property: 'street', constraints: { isString: 'street must be a string' } };
+      const parent = { property: 'address', children: [child] };
+      const exception = new Rfc9457ValidationException([parent]);
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.errors).toEqual([
+        {
+          property: 'address',
+          children: [{ property: 'street', constraints: { isString: 'street must be a string' } }],
+        },
+      ]);
+    });
+  });
+
   describe('edge-case branches', () => {
     it('works when constructed without options (default parameter)', () => {
       const factory = new ProblemDetailsFactory();
