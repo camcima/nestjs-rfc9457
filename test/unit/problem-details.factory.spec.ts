@@ -791,6 +791,45 @@ describe('ProblemDetailsFactory', () => {
     });
   });
 
+  describe('status clamping', () => {
+    let loggerWarnSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerWarnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerWarnSpy.mockRestore();
+    });
+
+    it('ignores a mapper-supplied 200 and falls back to the exception status', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ status: 200, title: 'Oops, config typo' }),
+      });
+      const { status, body } = factory.create(new NotFoundException(), mockRequest);
+      expect(status).toBe(404);
+      expect(body.status).toBe(404);
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('200'));
+    });
+
+    it('ignores a mapper-supplied 302 and falls back to 500 for non-HTTP exceptions', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ status: 302, title: 'Redirect?' }),
+      });
+      const { status } = factory.create(new Error('boom'), mockRequest);
+      expect(status).toBe(500);
+    });
+
+    it('still accepts valid 4xx/5xx statuses from mappers', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ status: 503, title: 'Service Unavailable' }),
+      });
+      const { status } = factory.create(new Error('boom'), mockRequest);
+      expect(status).toBe(503);
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('unknown exception fallback', () => {
     it('produces generic 500 for non-HttpException (catch-all mode)', () => {
       const factory = createFactory({ catchAllExceptions: true });

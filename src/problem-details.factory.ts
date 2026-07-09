@@ -149,8 +149,16 @@ export class ProblemDetailsFactory {
   }
 
   private resolveStatus(result: ProblemDetail, exception: unknown): number {
-    if (typeof result.status === 'number' && result.status >= 100 && result.status < 600) {
-      return result.status;
+    if (typeof result.status === 'number') {
+      if (result.status >= 400 && result.status < 600) {
+        return result.status;
+      }
+      // A problem details response is an error response (RFC 9457). A
+      // non-error status here is a configuration bug (mapper/decorator
+      // typo) — surface it in logs and fall back rather than emit it.
+      this.logger.warn(
+        `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599)`,
+      );
     }
     if (exception instanceof HttpException) {
       return exception.getStatus();
