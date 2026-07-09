@@ -5,7 +5,7 @@ import { createRfc9457ValidationPipeExceptionFactory } from '../../src/validatio
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
 
 describe('Rfc9457ValidationException', () => {
-  it('extends HttpException, not BadRequestException (BREAKING vs <=1.x)', () => {
+  it('extends HttpException, not BadRequestException (BREAKING vs earlier releases (<=0.4.x))', () => {
     const errors: ValidationError[] = [];
     const exception = new Rfc9457ValidationException(errors);
     expect(exception).toBeInstanceOf(HttpException);
@@ -95,5 +95,13 @@ describe('configurable Tier 2 status', () => {
 
   it('pipe exception factory rejects non-error statuses at configuration time', () => {
     expect(() => createRfc9457ValidationPipeExceptionFactory({ status: 200 })).toThrow(RangeError);
+  });
+
+  it('constructor rejects an out-of-range status even on direct construction', () => {
+    expect(() => new Rfc9457ValidationException([], 200)).toThrow(RangeError);
+  });
+
+  it('constructor accepts the boundary status 599', () => {
+    expect(() => new Rfc9457ValidationException([], 599)).not.toThrow();
   });
 });
