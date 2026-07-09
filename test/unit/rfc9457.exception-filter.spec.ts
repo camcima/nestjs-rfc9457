@@ -236,5 +236,45 @@ describe('Rfc9457ExceptionFilter', () => {
         500,
       );
     });
+
+    it('still sends the generic 500 when onUnhandled throws', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw new Error('sentry is down');
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 500, title: 'Internal Server Error' }),
+        500,
+      );
+    });
+
+    it('logs both the callback failure and the original exception when onUnhandled throws', () => {
+      const { filter, mockHost } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw new Error('sentry is down');
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      const messages = loggerErrorSpy.mock.calls.map((call) => call[0]);
+      expect(messages).toContainEqual(expect.stringContaining('onUnhandled callback threw'));
+      expect(messages).toContainEqual(expect.stringContaining('original failure'));
+    });
+
+    it('never includes onUnhandled callback error text in the response body', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw new Error('secret-sink-credentials');
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      const responseBody = mockHttpAdapter.reply.mock.calls[0][1];
+      expect(JSON.stringify(responseBody)).not.toContain('secret-sink-credentials');
+    });
   });
 });

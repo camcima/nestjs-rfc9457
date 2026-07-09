@@ -68,13 +68,20 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     if (!isHttpException) {
       if (this.options.onUnhandled) {
         const ctx = host.switchToHttp();
-        this.options.onUnhandled(exception, ctx.getRequest());
-      } else if (exception instanceof Error) {
-        // Pass stack as 2nd arg so NestJS routes it through its stack-trace
-        // slot while preserving the constructor's context (`Rfc9457ExceptionFilter`).
-        this.logger.error(`Unhandled non-HTTP exception: ${exception.message}`, exception.stack);
+        try {
+          this.options.onUnhandled(exception, ctx.getRequest());
+        } catch (callbackError) {
+          // onUnhandled is observability-only: its failure must never replace
+          // the response. Log the callback failure AND the original exception
+          // so neither trail is lost.
+          this.logger.error(
+            'onUnhandled callback threw; falling back to default logging',
+            callbackError instanceof Error ? callbackError.stack : undefined,
+          );
+          this.logOriginal(exception);
+        }
       } else {
-        this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', { exception });
+        this.logOriginal(exception);
       }
     }
 
@@ -86,5 +93,15 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     const httpAdapter = this.adapterHost.httpAdapter;
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
     httpAdapter.reply(response, body, status);
+  }
+
+  private logOriginal(exception: unknown): void {
+    if (exception instanceof Error) {
+      // Pass stack as 2nd arg so NestJS routes it through its stack-trace
+      // slot while preserving the constructor's context (`Rfc9457ExceptionFilter`).
+      this.logger.error(`Unhandled non-HTTP exception: ${exception.message}`, exception.stack);
+    } else {
+      this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', { exception });
+    }
   }
 }
