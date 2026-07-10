@@ -672,6 +672,18 @@ describe('ProblemDetailsFactory', () => {
       expect(body.errors).toEqual([]);
     });
 
+    it('drops object entries with nothing salvageable (no property, no string constraints)', () => {
+      const factory = createFactory();
+      const exception = new Rfc9457ValidationException([
+        { constraints: { bogus: 123 } },
+        { property: 42 },
+        {},
+      ]);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      expect(body.errors).toEqual([]);
+    });
+
     it('drops non-string constraint values and non-array children', () => {
       const factory = createFactory();
       const exception = new Rfc9457ValidationException([
@@ -1002,6 +1014,46 @@ describe('ProblemDetailsFactory', () => {
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining('validationExceptionMapper'),
         expect.any(String),
+      );
+    });
+
+    it('logs with an undefined trace slot when callbacks throw non-Error values', () => {
+      const mapperFactory = createFactory({
+        exceptionMapper: () => {
+          throw 'mapper string bug';
+        },
+      });
+      expect(mapperFactory.create(new NotFoundException('nope'), mockRequest).status).toBe(404);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exceptionMapper threw'),
+        undefined,
+      );
+
+      const strategyFactory = createFactory({
+        instanceStrategy: () => {
+          throw 'strategy string bug';
+        },
+      });
+      const { body } = strategyFactory.create(new NotFoundException('nope'), mockRequest);
+      expect(body.instance).toBeUndefined();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('instanceStrategy'),
+        undefined,
+      );
+
+      const validationFactory = createFactory({
+        validationExceptionMapper: () => {
+          throw 'validation string bug';
+        },
+      });
+      const result = validationFactory.create(
+        new BadRequestException(['email must be an email']),
+        mockRequest,
+      );
+      expect(result.body.errors).toEqual(['email must be an email']);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('validationExceptionMapper'),
+        undefined,
       );
     });
   });

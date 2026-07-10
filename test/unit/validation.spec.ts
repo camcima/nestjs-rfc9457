@@ -82,6 +82,14 @@ describe('configurable Tier 2 status', () => {
     expect(body.errors).toHaveLength(1);
   });
 
+  it('falls back to "Unknown Error" title for in-range statuses with no HTTP phrase', () => {
+    const factory = new ProblemDetailsFactory({});
+    const exception = new Rfc9457ValidationException([], 460);
+    const { status, body } = factory.create(exception, { url: '/x', method: 'POST' });
+    expect(status).toBe(460);
+    expect(body.title).toBe('Unknown Error');
+  });
+
   it('pipe exception factory forwards the configured status', () => {
     const exceptionFactory = createRfc9457ValidationPipeExceptionFactory({ status: 422 });
     const exception = exceptionFactory([]);

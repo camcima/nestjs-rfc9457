@@ -191,6 +191,24 @@ describe('Rfc9457ExceptionFilter', () => {
       expect(JSON.stringify(responseBody)).not.toContain('secret-mapper-internals');
     });
 
+    it('logs with an undefined trace slot when the mapper throws a non-Error value', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        exceptionMapper: () => {
+          throw 'string bug';
+        },
+      });
+      filter.catch(new NotFoundException('Not here'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 404 }),
+        404,
+      );
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exceptionMapper threw'),
+        undefined,
+      );
+    });
+
     it('delegates to super.catch when the mapper throws for a non-HttpException without catchAllExceptions', () => {
       const { filter, mockHost, mockHttpAdapter } = createMocks({
         catchAllExceptions: false,
@@ -324,6 +342,37 @@ describe('Rfc9457ExceptionFilter', () => {
       expect(messages).toContainEqual(expect.stringContaining('original failure'));
     });
 
+    it('logs with an undefined trace slot when onUnhandled throws a non-Error value', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw 'string failure';
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalled();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('onUnhandled callback threw'),
+        undefined,
+      );
+    });
+
+    it('contains an async onUnhandled rejection with a non-Error reason', async () => {
+      const { filter, mockHost } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: (() => Promise.reject('string rejection')) as unknown as (
+          exception: unknown,
+          request: any,
+        ) => void,
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      await new Promise((r) => setImmediate(r));
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('onUnhandled callback rejected'),
+        undefined,
+      );
+    });
+
     it('contains a rejected promise from an async onUnhandled callback without crashing', async () => {
       const { filter, mockHost, mockHttpAdapter } = createMocks({
         catchAllExceptions: true,
@@ -394,5 +443,18 @@ describe('committed response guard', () => {
     filter.catch(new Error('mapped but committed'), mockHost);
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
     expect(mockHttpAdapter.end).toHaveBeenCalled();
+  });
+
+  it('stringifies non-Error exceptions in the committed-response log', () => {
+    const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
+      catchAllExceptions: true,
+    });
+    mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+    filter.catch({ weird: true }, mockHost);
+    expect(mockHttpAdapter.end).toHaveBeenCalledWith(mockResponse);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('headers already sent'),
+      '[object Object]',
+    );
   });
 });
