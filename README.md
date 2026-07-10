@@ -432,11 +432,14 @@ replaces the problem-details response.
 
 Callback errors are never included in the response body.
 
-All of these callbacks are synchronous contracts: containment covers a thrown
-error, not a rejected `Promise`. If a callback is declared `async` (or
-otherwise returns a `Promise`), its rejection happens after the callback has
-already returned to the library and cannot be caught here — it surfaces as an
-unhandled rejection instead.
+`exceptionMapper`, `validationExceptionMapper`, and `instanceStrategy` are
+synchronous contracts — their return types don't admit a `Promise`, so an
+`async` callback is rejected at compile time. `onUnhandled` returns `void`,
+which means an `async` callback type-checks; the filter handles that case
+too: if the callback returns a thenable, its rejection is caught, logged
+together with the original exception, and never surfaces as an unhandled
+rejection. The generic 500 response is sent synchronously either way —
+the library does not await the callback.
 
 ---
 
