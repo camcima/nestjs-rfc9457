@@ -104,4 +104,16 @@ describe('configurable Tier 2 status', () => {
   it('constructor accepts the boundary status 599', () => {
     expect(() => new Rfc9457ValidationException([], 599)).not.toThrow();
   });
+
+  it('constructor rejects non-integer statuses (NaN comparisons are always false)', () => {
+    expect(() => new Rfc9457ValidationException([], NaN)).toThrow(RangeError);
+    expect(() => new Rfc9457ValidationException([], 400.5)).toThrow(RangeError);
+  });
+
+  it('pipe exception factory rejects non-integer statuses', () => {
+    expect(() => createRfc9457ValidationPipeExceptionFactory({ status: NaN })).toThrow(RangeError);
+    expect(() => createRfc9457ValidationPipeExceptionFactory({ status: 400.5 })).toThrow(
+      RangeError,
+    );
+  });
 });

@@ -13,7 +13,8 @@ export function createRfc9457ValidationPipeExceptionFactory(
   options?: Rfc9457ValidationPipeExceptionFactoryOptions,
 ): (errors: unknown[]) => Rfc9457ValidationException {
   const status = options?.status ?? 400;
-  if (status < 400 || status > 599) {
+  // Integer check first: NaN fails every comparison, so range checks alone let it through
+  if (!Number.isInteger(status) || status < 400 || status > 599) {
     throw new RangeError(
       `createRfc9457ValidationPipeExceptionFactory: status must be an error status (400-599), got ${status}`,
     );

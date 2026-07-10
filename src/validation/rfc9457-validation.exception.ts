@@ -24,7 +24,8 @@ export class Rfc9457ValidationException extends HttpException {
   }
 
   private static validateStatus(status: number): number {
-    if (status < 400 || status > 599) {
+    // Integer check first: NaN fails every comparison, so range checks alone let it through
+    if (!Number.isInteger(status) || status < 400 || status > 599) {
       throw new RangeError(
         `Rfc9457ValidationException: status must be an error status (400-599), got ${status}`,
       );
