@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import {
@@ -13,6 +13,8 @@ import { toSlug } from './utils/slug';
 
 @Injectable()
 export class ProblemDetailsFactory {
+  private readonly logger = new Logger(ProblemDetailsFactory.name);
+
   constructor(
     @Inject(RFC9457_MODULE_OPTIONS) private readonly options: Rfc9457ModuleOptions = {},
   ) {}
@@ -51,9 +53,16 @@ export class ProblemDetailsFactory {
     // Step 1: exceptionMapper callback.
     // Skipped when the filter already ran the mapper (to avoid double invocation).
     if (!options?.skipMapper && this.options.exceptionMapper) {
-      const mapped = this.options.exceptionMapper(exception, request);
-      if (mapped) {
-        result = { ...mapped };
+      try {
+        const mapped = this.options.exceptionMapper(exception, request);
+        if (mapped) {
+          result = { ...mapped };
+        }
+      } catch (mapperError) {
+        this.logger.error(
+          'exceptionMapper threw while mapping an exception; continuing with standard resolution',
+          mapperError instanceof Error ? mapperError.stack : undefined,
+        );
       }
     }
 
@@ -136,17 +145,35 @@ export class ProblemDetailsFactory {
       result.instance = instance;
     }
 
+    // Production hardening: strip detail from server-error responses.
+    if (this.options.suppress5xxDetail && httpStatus >= 500) {
+      delete result.detail;
+    }
+
     return { status: httpStatus, body: result };
   }
 
   private resolveStatus(result: ProblemDetail, exception: unknown): number {
-    if (typeof result.status === 'number' && result.status >= 100 && result.status < 600) {
-      return result.status;
+    const fallback = exception instanceof HttpException ? exception.getStatus() : 500;
+    if (typeof result.status === 'number') {
+      if (result.status >= 400 && result.status < 600) {
+        return result.status;
+      }
+      // A problem details response is an error response (RFC 9457). A
+      // non-error status here is a configuration bug (mapper/decorator
+      // typo) — surface it in logs and fall back rather than emit it. Only
+      // warn when the fallback actually differs from what was supplied:
+      // e.g. `new HttpException('x', 302)` with no mapper copies 302 into
+      // result.status at create() step 4, and the fallback (302 again) would
+      // be emitted unchanged — warning there would falsely claim the status
+      // was ignored.
+      if (result.status !== fallback) {
+        this.logger.warn(
+          `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
+        );
+      }
     }
-    if (exception instanceof HttpException) {
-      return exception.getStatus();
-    }
-    return 500;
+    return fallback;
   }
 
   private isUriReference(value: string): boolean {
@@ -181,7 +208,17 @@ export class ProblemDetailsFactory {
     if (strategy === 'none') return undefined;
     if (strategy === 'request-uri') return request.url.split('?')[0];
     if (strategy === 'uuid') return `urn:uuid:${randomUUID()}`;
-    if (typeof strategy === 'function') return strategy(request, exception);
+    if (typeof strategy === 'function') {
+      try {
+        return strategy(request, exception);
+      } catch (strategyError) {
+        this.logger.error(
+          'instanceStrategy callback threw; omitting instance',
+          strategyError instanceof Error ? strategyError.stack : undefined,
+        );
+        return undefined;
+      }
+    }
     return undefined;
   }
 
@@ -218,13 +255,15 @@ export class ProblemDetailsFactory {
     // Tier 2: Rfc9457ValidationException — safe to use instanceof since the class
     // no longer imports class-validator at runtime (validationErrors is unknown[]).
     if (exception instanceof Rfc9457ValidationException) {
-      const validationErrors = exception.validationErrors;
-      // Rfc9457ValidationException extends BadRequestException, so it is always 400.
+      const status = exception.getStatus();
+      const seen = new WeakSet<object>();
       return {
-        status: 400,
-        title: 'Bad Request',
+        status,
+        title: http.STATUS_CODES[status] || 'Unknown Error',
         detail: 'Request validation failed',
-        errors: validationErrors.map((err) => this.flattenValidationError(err)),
+        errors: exception.validationErrors
+          .map((err) => this.flattenValidationError(err, seen))
+          .filter((err): err is Record<string, unknown> => err !== null),
       };
     }
 
@@ -242,7 +281,15 @@ export class ProblemDetailsFactory {
       const response = httpException.getResponse() as any;
       const messages: string[] = response.message;
       if (this.options.validationExceptionMapper) {
-        return { ...this.options.validationExceptionMapper(messages, request, status) };
+        try {
+          return { ...this.options.validationExceptionMapper(messages, request, status) };
+        } catch (mapperError) {
+          // Fall through to the default Tier 1 body below.
+          this.logger.error(
+            'validationExceptionMapper threw; falling back to the default validation problem',
+            mapperError instanceof Error ? mapperError.stack : undefined,
+          );
+        }
       }
       return {
         status,
@@ -286,14 +333,46 @@ export class ProblemDetailsFactory {
     return Array.isArray(msg) && msg.length > 0 && msg.every((m: any) => typeof m === 'string');
   }
 
-  private flattenValidationError(error: any): any {
-    const result: any = { property: error.property };
-    if (error.constraints) {
-      result.constraints = error.constraints;
+  /**
+   * Defensively flattens one validation-error entry. The public
+   * Rfc9457ValidationException accepts unknown[], so entries may be anything:
+   * skip non-objects, keep only a string `property`, a string-valued
+   * `constraints` map, and array `children`; the shared `seen` set breaks
+   * cycles. Returns null for entries with no salvageable content shape.
+   */
+  private flattenValidationError(
+    error: unknown,
+    seen: WeakSet<object>,
+  ): Record<string, unknown> | null {
+    if (typeof error !== 'object' || error === null || seen.has(error)) {
+      return null;
     }
-    if (error.children && error.children.length > 0) {
-      result.children = error.children.map((child: any) => this.flattenValidationError(child));
+    seen.add(error);
+    const source = error as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    if (typeof source.property === 'string') {
+      result.property = source.property;
     }
-    return result;
+    if (
+      typeof source.constraints === 'object' &&
+      source.constraints !== null &&
+      !Array.isArray(source.constraints)
+    ) {
+      const constraints = Object.fromEntries(
+        Object.entries(source.constraints).filter(([, value]) => typeof value === 'string'),
+      );
+      if (Object.keys(constraints).length > 0) {
+        result.constraints = constraints;
+      }
+    }
+    if (Array.isArray(source.children) && source.children.length > 0) {
+      const children = source.children
+        .map((child) => this.flattenValidationError(child, seen))
+        .filter((child): child is Record<string, unknown> => child !== null);
+      if (children.length > 0) {
+        result.children = children;
+      }
+    }
+    return Object.keys(result).length > 0 ? result : null;
   }
 }

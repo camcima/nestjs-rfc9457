@@ -161,6 +161,11 @@ describe('Express E2E', () => {
       });
       expect(body.detail).toBeUndefined();
     });
+
+    it('does not attempt a second write when the response is already committed', async () => {
+      const response = await request(app.getHttpServer()).get('/test/committed').expect(200);
+      expect(response.text).toBe('partial');
+    });
   });
 
   describe('configured with exceptionMapper', () => {

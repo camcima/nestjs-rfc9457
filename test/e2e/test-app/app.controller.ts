@@ -4,6 +4,7 @@ import {
   Get,
   NotFoundException,
   Post,
+  Res,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -48,5 +49,12 @@ export class AppController {
   @Get('unhandled')
   unhandled(): never {
     throw new Error('Unexpected internal error');
+  }
+
+  @Get('committed')
+  committed(@Res() res: any): never {
+    // Express-only test route: commit the response, then throw.
+    res.write('partial');
+    throw new Error('thrown after response was committed');
   }
 }

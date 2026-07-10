@@ -39,12 +39,26 @@ export interface ApplyProblemDetailResponsesOptions {
 }
 
 /**
+ * Tracks which statuses have already been applied to each controller class,
+ * making repeated invocations (lazy document factories, hot reload, multiple
+ * SwaggerModule.setup calls) idempotent. Per status, the first call's options
+ * win. WeakMap-keyed by the controller constructor so reloaded module graphs
+ * with fresh classes are documented anew while stale classes can be collected.
+ */
+const appliedStatuses = new WeakMap<object, Set<number>>();
+
+/**
  * Programmatically applies `@ApiResponse` decorators for RFC 9457 Problem Details
  * to every controller discovered in the application.
  *
  * Responses are documented under `application/problem+json` as required by RFC 9457.
  * All statuses use the base `ProblemDetailDto` by default. To document Tier 2
  * structured validation errors, pass `validationStatuses: [400]`.
+ *
+ * Idempotent per controller and status: it is safe to call this more than once
+ * (lazy document factories invoked repeatedly, hot reload, multiple
+ * `SwaggerModule.setup()` calls) — for a given controller and status, only the
+ * first call's options are applied.
  *
  * Call this inside the lazy document factory passed to `SwaggerModule.setup()`
  * so that decorators are attached before the OpenAPI spec is generated:
@@ -82,9 +96,17 @@ export function applyProblemDetailResponses(
     if (!controller.metatype) continue;
     if (options?.filter && !options.filter(controller)) continue;
 
-    ApiExtraModels(ProblemDetailDto, ValidationProblemDetailDto)(controller.metatype);
+    let applied = appliedStatuses.get(controller.metatype);
+    if (!applied) {
+      applied = new Set<number>();
+      appliedStatuses.set(controller.metatype, applied);
+      ApiExtraModels(ProblemDetailDto, ValidationProblemDetailDto)(controller.metatype);
+    }
 
     for (const status of statuses) {
+      if (applied.has(status)) continue;
+      applied.add(status);
+
       const dtoClass = validationStatuses.has(status)
         ? ValidationProblemDetailDto
         : ProblemDetailDto;

@@ -5,11 +5,13 @@ import {
   ForbiddenException,
   HttpException,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
 import { Rfc9457ModuleOptions } from '../../src/rfc9457.interfaces';
+import type { MockInstance } from 'vitest';
 
 function createFactory(options: Rfc9457ModuleOptions = {}): ProblemDetailsFactory {
   return new ProblemDetailsFactory(options);
@@ -661,6 +663,66 @@ describe('ProblemDetailsFactory', () => {
     });
   });
 
+  describe('Tier 2 malformed validation errors', () => {
+    it('skips null, primitive, and string entries instead of crashing', () => {
+      const factory = createFactory();
+      const exception = new Rfc9457ValidationException([null, 42, 'oops', undefined]);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      expect(body.errors).toEqual([]);
+    });
+
+    it('drops object entries with nothing salvageable (no property, no string constraints)', () => {
+      const factory = createFactory();
+      const exception = new Rfc9457ValidationException([
+        { constraints: { bogus: 123 } },
+        { property: 42 },
+        {},
+      ]);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      expect(body.errors).toEqual([]);
+    });
+
+    it('drops non-string constraint values and non-array children', () => {
+      const factory = createFactory();
+      const exception = new Rfc9457ValidationException([
+        {
+          property: 'email',
+          constraints: { isEmail: 'must be an email', bogus: 123 },
+          children: 'not-an-array',
+        },
+      ]);
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.errors).toEqual([
+        { property: 'email', constraints: { isEmail: 'must be an email' } },
+      ]);
+    });
+
+    it('breaks cycles in children without infinite recursion', () => {
+      const factory = createFactory();
+      const cyclic: any = { property: 'a', constraints: { isDefined: 'a required' }, children: [] };
+      cyclic.children.push(cyclic);
+      const exception = new Rfc9457ValidationException([cyclic]);
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.errors).toEqual([{ property: 'a', constraints: { isDefined: 'a required' } }]);
+    });
+
+    it('still flattens valid class-validator errors with nested children', () => {
+      const factory = createFactory();
+      const child = { property: 'street', constraints: { isString: 'street must be a string' } };
+      const parent = { property: 'address', children: [child] };
+      const exception = new Rfc9457ValidationException([parent]);
+      const { body } = factory.create(exception, mockRequest);
+      expect(body.errors).toEqual([
+        {
+          property: 'address',
+          children: [{ property: 'street', constraints: { isString: 'street must be a string' } }],
+        },
+      ]);
+    });
+  });
+
   describe('edge-case branches', () => {
     it('works when constructed without options (default parameter)', () => {
       const factory = new ProblemDetailsFactory();
@@ -738,6 +800,57 @@ describe('ProblemDetailsFactory', () => {
       const { status, body } = factory.create(new HttpException(null as any, 400), mockRequest);
       expect(status).toBe(400);
       expect(body.detail).toBeUndefined();
+    });
+  });
+
+  describe('status clamping', () => {
+    let loggerWarnSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerWarnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerWarnSpy.mockRestore();
+    });
+
+    it('ignores a mapper-supplied 200 and falls back to the exception status', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ status: 200, title: 'Oops, config typo' }),
+      });
+      const { status, body } = factory.create(new NotFoundException(), mockRequest);
+      expect(status).toBe(404);
+      expect(body.status).toBe(404);
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('200'));
+    });
+
+    it('ignores a mapper-supplied 302 and falls back to 500 for non-HTTP exceptions', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ status: 302, title: 'Redirect?' }),
+      });
+      const { status } = factory.create(new Error('boom'), mockRequest);
+      expect(status).toBe(500);
+    });
+
+    it('still accepts valid 4xx/5xx statuses from mappers', () => {
+      const factory = createFactory({
+        exceptionMapper: () => ({ status: 503, title: 'Service Unavailable' }),
+      });
+      const { status } = factory.create(new Error('boom'), mockRequest);
+      expect(status).toBe(503);
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+
+    it('emits an out-of-range HttpException status unclamped without a false warning', () => {
+      // No mapper: create() step 4 copies exception.getStatus() (302) straight
+      // into result.status, so the fallback computed in resolveStatus is also
+      // 302. The status is emitted unchanged (framework semantics), and no
+      // warning should fire since nothing was actually ignored.
+      const factory = createFactory();
+      const { status, body } = factory.create(new HttpException('redirect-ish', 302), mockRequest);
+      expect(status).toBe(302);
+      expect(body.status).toBe(302);
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -841,6 +954,141 @@ describe('ProblemDetailsFactory', () => {
       const { body } = factory.create(new CustomValidationException(), mockRequest);
       expect(body.type).toBe('https://example.com/custom-validation');
       expect(body.errors).toBeUndefined();
+    });
+  });
+
+  describe('callback containment', () => {
+    let loggerErrorSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerErrorSpy.mockRestore();
+    });
+
+    it('create() falls through to standard resolution when exceptionMapper throws', () => {
+      const factory = createFactory({
+        exceptionMapper: () => {
+          throw new Error('mapper bug');
+        },
+      });
+      const { status, body } = factory.create(
+        new NotFoundException('User 42 not found'),
+        mockRequest,
+      );
+      expect(status).toBe(404);
+      expect(body.detail).toBe('User 42 not found');
+      expect(loggerErrorSpy).toHaveBeenCalled();
+    });
+
+    it('omits instance when a custom instanceStrategy throws', () => {
+      const factory = createFactory({
+        instanceStrategy: () => {
+          throw new Error('strategy bug');
+        },
+      });
+      const { status, body } = factory.create(new NotFoundException('nope'), mockRequest);
+      expect(status).toBe(404);
+      expect(body.instance).toBeUndefined();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('instanceStrategy'),
+        expect.any(String),
+      );
+    });
+
+    it('falls back to the default Tier 1 validation body when validationExceptionMapper throws', () => {
+      const factory = createFactory({
+        validationExceptionMapper: () => {
+          throw new Error('validation mapper bug');
+        },
+      });
+      // Simulate ValidationPipe default output: BadRequestException with
+      // { message: string[], error: 'Bad Request' }.
+      const exception = new BadRequestException(['email must be an email']);
+      const { status, body } = factory.create(exception, mockRequest);
+      expect(status).toBe(400);
+      expect(body.detail).toBe('Request validation failed');
+      expect(body.errors).toEqual(['email must be an email']);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('validationExceptionMapper'),
+        expect.any(String),
+      );
+    });
+
+    it('logs with an undefined trace slot when callbacks throw non-Error values', () => {
+      const mapperFactory = createFactory({
+        exceptionMapper: () => {
+          throw 'mapper string bug';
+        },
+      });
+      expect(mapperFactory.create(new NotFoundException('nope'), mockRequest).status).toBe(404);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exceptionMapper threw'),
+        undefined,
+      );
+
+      const strategyFactory = createFactory({
+        instanceStrategy: () => {
+          throw 'strategy string bug';
+        },
+      });
+      const { body } = strategyFactory.create(new NotFoundException('nope'), mockRequest);
+      expect(body.instance).toBeUndefined();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('instanceStrategy'),
+        undefined,
+      );
+
+      const validationFactory = createFactory({
+        validationExceptionMapper: () => {
+          throw 'validation string bug';
+        },
+      });
+      const result = validationFactory.create(
+        new BadRequestException(['email must be an email']),
+        mockRequest,
+      );
+      expect(result.body.errors).toEqual(['email must be an email']);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('validationExceptionMapper'),
+        undefined,
+      );
+    });
+  });
+
+  describe('suppress5xxDetail', () => {
+    it('strips detail from 5xx responses when enabled', () => {
+      const factory = createFactory({ suppress5xxDetail: true });
+      const { status, body } = factory.create(
+        new InternalServerErrorException('database authentication failed'),
+        mockRequest,
+      );
+      expect(status).toBe(500);
+      expect(body.detail).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain('database authentication failed');
+    });
+
+    it('keeps detail on 4xx responses when enabled', () => {
+      const factory = createFactory({ suppress5xxDetail: true });
+      const { body } = factory.create(new NotFoundException('User 42 not found'), mockRequest);
+      expect(body.detail).toBe('User 42 not found');
+    });
+
+    it('strips mapper-provided detail on 5xx too (blunt by design)', () => {
+      const factory = createFactory({
+        suppress5xxDetail: true,
+        exceptionMapper: () => ({ status: 503, title: 'Down', detail: 'try later' }),
+      });
+      const { body } = factory.create(new Error('boom'), mockRequest);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('is off by default, preserving NestJS semantics', () => {
+      const factory = createFactory();
+      const { body } = factory.create(new InternalServerErrorException('DB down'), mockRequest);
+      expect(body.detail).toBe('DB down');
     });
   });
 });

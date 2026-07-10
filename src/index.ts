@@ -13,4 +13,7 @@ export {
 } from './rfc9457.interfaces';
 export { RFC9457_MODULE_OPTIONS, PROBLEM_CONTENT_TYPE } from './rfc9457.constants';
 export { Rfc9457ValidationException } from './validation/rfc9457-validation.exception';
-export { createRfc9457ValidationPipeExceptionFactory } from './validation/rfc9457-validation-pipe-exception.factory';
+export {
+  createRfc9457ValidationPipeExceptionFactory,
+  Rfc9457ValidationPipeExceptionFactoryOptions,
+} from './validation/rfc9457-validation-pipe-exception.factory';

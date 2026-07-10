@@ -2,7 +2,7 @@ import { ArgumentsHost, Catch, HttpException, Inject, Logger } from '@nestjs/com
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import { ProblemDetailsFactory } from './problem-details.factory';
 import { RFC9457_MODULE_OPTIONS, PROBLEM_CONTENT_TYPE } from './rfc9457.constants';
-import { Rfc9457ModuleOptions } from './rfc9457.interfaces';
+import { ProblemDetail, Rfc9457ModuleOptions } from './rfc9457.interfaces';
 
 @Catch()
 export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
@@ -38,13 +38,21 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     if (this.options.exceptionMapper) {
       const ctx = host.switchToHttp();
       const request = ctx.getRequest();
-      const mapped = this.options.exceptionMapper(exception, request);
+      let mapped: ProblemDetail | null = null;
+      try {
+        mapped = this.options.exceptionMapper(exception, request);
+      } catch (mapperError) {
+        // A throwing mapper is an application bug, but the error path must
+        // stay total: log it and continue with standard resolution.
+        this.logger.error(
+          'exceptionMapper threw while mapping an exception; continuing with standard resolution',
+          mapperError instanceof Error ? mapperError.stack : undefined,
+        );
+      }
       if (mapped) {
         const response = ctx.getResponse();
         const { status, body } = this.factory.createFromMapped(mapped, exception, request);
-        const httpAdapter = this.adapterHost.httpAdapter;
-        httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
-        httpAdapter.reply(response, body, status);
+        this.sendProblem(response, body, status, exception);
         return;
       }
     }
@@ -68,13 +76,41 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     if (!isHttpException) {
       if (this.options.onUnhandled) {
         const ctx = host.switchToHttp();
-        this.options.onUnhandled(exception, ctx.getRequest());
-      } else if (exception instanceof Error) {
-        // Pass stack as 2nd arg so NestJS routes it through its stack-trace
-        // slot while preserving the constructor's context (`Rfc9457ExceptionFilter`).
-        this.logger.error(`Unhandled non-HTTP exception: ${exception.message}`, exception.stack);
+        try {
+          const maybeThenable = this.options.onUnhandled(exception, ctx.getRequest()) as unknown;
+          // onUnhandled is typed `=> void`, but TypeScript allows an `async`
+          // callback there too (Promise<void> is assignable to void). If the
+          // callback returned a thenable, attach a rejection handler so a
+          // rejected promise never becomes an unhandled rejection and crashes
+          // the process. The response write below must stay synchronous, so
+          // this is intentionally not awaited.
+          if (
+            maybeThenable !== null &&
+            (typeof maybeThenable === 'object' || typeof maybeThenable === 'function') &&
+            typeof (maybeThenable as PromiseLike<unknown>).then === 'function'
+          ) {
+            Promise.resolve(maybeThenable as PromiseLike<unknown>).catch(
+              (callbackError: unknown) => {
+                this.logger.error(
+                  'onUnhandled callback rejected; falling back to default logging',
+                  callbackError instanceof Error ? callbackError.stack : undefined,
+                );
+                this.logOriginal(exception);
+              },
+            );
+          }
+        } catch (callbackError) {
+          // onUnhandled is observability-only: its failure must never replace
+          // the response. Log the callback failure AND the original exception
+          // so neither trail is lost.
+          this.logger.error(
+            'onUnhandled callback threw; falling back to default logging',
+            callbackError instanceof Error ? callbackError.stack : undefined,
+          );
+          this.logOriginal(exception);
+        }
       } else {
-        this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', { exception });
+        this.logOriginal(exception);
       }
     }
 
@@ -83,8 +119,41 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     const response = ctx.getResponse();
     // skipMapper: the filter already ran the mapper above and it returned null
     const { status, body } = this.factory.create(exception, request, { skipMapper: true });
+    this.sendProblem(response, body, status, exception);
+  }
+
+  /**
+   * Writes the problem response unless headers are already committed
+   * (e.g. an exception thrown mid-stream). Mirrors Nest's own
+   * BaseExceptionFilter: when the response cannot be safely replaced,
+   * log the original exception and end the connection.
+   */
+  private sendProblem(
+    response: unknown,
+    body: ProblemDetail,
+    status: number,
+    exception: unknown,
+  ): void {
     const httpAdapter = this.adapterHost.httpAdapter;
+    if (httpAdapter.isHeadersSent(response)) {
+      this.logger.error(
+        'Cannot send problem details: headers already sent; ending response',
+        exception instanceof Error ? exception.stack : String(exception),
+      );
+      httpAdapter.end(response);
+      return;
+    }
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
     httpAdapter.reply(response, body, status);
+  }
+
+  private logOriginal(exception: unknown): void {
+    if (exception instanceof Error) {
+      // Pass stack as 2nd arg so NestJS routes it through its stack-trace
+      // slot while preserving the constructor's context (`Rfc9457ExceptionFilter`).
+      this.logger.error(`Unhandled non-HTTP exception: ${exception.message}`, exception.stack);
+    } else {
+      this.logger.error('Unhandled non-HTTP exception (non-Error value thrown)', { exception });
+    }
   }
 }

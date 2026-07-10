@@ -12,6 +12,8 @@ function createMocks(options: Rfc9457ModuleOptions = {}) {
   const mockHttpAdapter = {
     setHeader: vi.fn(),
     reply: vi.fn(),
+    isHeadersSent: vi.fn().mockReturnValue(false),
+    end: vi.fn(),
   };
 
   const adapterHost = { httpAdapter: mockHttpAdapter } as unknown as HttpAdapterHost;
@@ -148,6 +150,81 @@ describe('Rfc9457ExceptionFilter', () => {
     expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
   });
 
+  describe('exceptionMapper containment', () => {
+    let loggerErrorSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerErrorSpy.mockRestore();
+    });
+
+    it('falls back to standard HttpException resolution when the mapper throws', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        exceptionMapper: () => {
+          throw new Error('mapper bug');
+        },
+      });
+      filter.catch(new NotFoundException('Not here'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 404, title: 'Not Found', detail: 'Not here' }),
+        404,
+      );
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exceptionMapper threw'),
+        expect.any(String),
+      );
+    });
+
+    it('never includes mapper error text in the response body', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        exceptionMapper: () => {
+          throw new Error('secret-mapper-internals');
+        },
+      });
+      filter.catch(new TypeError('boom'), mockHost);
+      const responseBody = mockHttpAdapter.reply.mock.calls[0][1];
+      expect(JSON.stringify(responseBody)).not.toContain('secret-mapper-internals');
+    });
+
+    it('logs with an undefined trace slot when the mapper throws a non-Error value', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        exceptionMapper: () => {
+          throw 'string bug';
+        },
+      });
+      filter.catch(new NotFoundException('Not here'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 404 }),
+        404,
+      );
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exceptionMapper threw'),
+        undefined,
+      );
+    });
+
+    it('delegates to super.catch when the mapper throws for a non-HttpException without catchAllExceptions', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: false,
+        exceptionMapper: () => {
+          throw new Error('mapper bug');
+        },
+      });
+      try {
+        filter.catch(new TypeError('unexpected'), mockHost);
+      } catch {
+        // Expected: BaseExceptionFilter.catch fails in test environment
+      }
+      expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    });
+  });
+
   describe('unhandled exception observability', () => {
     let loggerErrorSpy: MockInstance;
 
@@ -236,5 +313,148 @@ describe('Rfc9457ExceptionFilter', () => {
         500,
       );
     });
+
+    it('still sends the generic 500 when onUnhandled throws', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw new Error('sentry is down');
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 500, title: 'Internal Server Error' }),
+        500,
+      );
+    });
+
+    it('logs both the callback failure and the original exception when onUnhandled throws', () => {
+      const { filter, mockHost } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw new Error('sentry is down');
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      const messages = loggerErrorSpy.mock.calls.map((call) => call[0]);
+      expect(messages).toContainEqual(expect.stringContaining('onUnhandled callback threw'));
+      expect(messages).toContainEqual(expect.stringContaining('original failure'));
+    });
+
+    it('logs with an undefined trace slot when onUnhandled throws a non-Error value', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw 'string failure';
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalled();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('onUnhandled callback threw'),
+        undefined,
+      );
+    });
+
+    it('contains an async onUnhandled rejection with a non-Error reason', async () => {
+      const { filter, mockHost } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: (() => Promise.reject('string rejection')) as unknown as (
+          exception: unknown,
+          request: any,
+        ) => void,
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      await new Promise((r) => setImmediate(r));
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('onUnhandled callback rejected'),
+        undefined,
+      );
+    });
+
+    it('contains a rejected promise from an async onUnhandled callback without crashing', async () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: (async () => {
+          throw new Error('async sink failure');
+        }) as unknown as (exception: unknown, request: any) => void,
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      // The reply must be sent synchronously, before the rejected promise
+      // has a chance to settle.
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 500, title: 'Internal Server Error' }),
+        500,
+      );
+
+      // Let the rejected promise's .catch() handler run.
+      await new Promise((r) => setImmediate(r));
+
+      const messages = loggerErrorSpy.mock.calls.map((call) => call[0]);
+      expect(messages).toContainEqual(expect.stringContaining('onUnhandled callback rejected'));
+      expect(messages).toContainEqual(expect.stringContaining('original failure'));
+    });
+
+    it('never includes onUnhandled callback error text in the response body', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        catchAllExceptions: true,
+        onUnhandled: () => {
+          throw new Error('secret-sink-credentials');
+        },
+      });
+      filter.catch(new TypeError('original failure'), mockHost);
+      const responseBody = mockHttpAdapter.reply.mock.calls[0][1];
+      expect(JSON.stringify(responseBody)).not.toContain('secret-sink-credentials');
+    });
+  });
+});
+
+describe('committed response guard', () => {
+  let loggerErrorSpy: MockInstance;
+
+  beforeEach(() => {
+    loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    loggerErrorSpy.mockRestore();
+  });
+
+  it('ends the response without writing when headers are already sent', () => {
+    const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks();
+    mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+    filter.catch(new NotFoundException('too late'), mockHost);
+    expect(mockHttpAdapter.setHeader).not.toHaveBeenCalled();
+    expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    expect(mockHttpAdapter.end).toHaveBeenCalledWith(mockResponse);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('headers already sent'),
+      expect.any(String),
+    );
+  });
+
+  it('guards the mapper path too', () => {
+    const { filter, mockHost, mockHttpAdapter } = createMocks({
+      exceptionMapper: () => ({ status: 503, title: 'Down' }),
+    });
+    mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+    filter.catch(new Error('mapped but committed'), mockHost);
+    expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    expect(mockHttpAdapter.end).toHaveBeenCalled();
+  });
+
+  it('stringifies non-Error exceptions in the committed-response log', () => {
+    const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
+      catchAllExceptions: true,
+    });
+    mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+    filter.catch({ weird: true }, mockHost);
+    expect(mockHttpAdapter.end).toHaveBeenCalledWith(mockResponse);
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('headers already sent'),
+      '[object Object]',
+    );
   });
 });

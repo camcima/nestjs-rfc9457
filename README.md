@@ -188,6 +188,8 @@ The response `Content-Type` is set to `application/problem+json` as required by 
 
 > **Hybrid applications (WebSockets / microservices):** the filter only handles HTTP contexts. For non-HTTP transports it rethrows the exception untouched so it never corrupts the transport with an HTTP reply — but the rethrow does **not** re-enter Nest's default WS/RPC handlers. If your app uses gateways or microservice listeners, bind transport-scoped exception filters for those contexts.
 
+> **Committed responses:** if an exception is thrown after the response has already been committed (headers sent — e.g. mid-stream), the filter cannot safely write a Problem Details body over it. It logs the exception and ends the response instead of attempting a second write, mirroring `BaseExceptionFilter`'s own behavior.
+
 ---
 
 ## Configuration
@@ -235,6 +237,8 @@ Slug derivation uses the HTTP status phrase from Node's built-in `http.STATUS_CO
 - `"Not Found"` → `not-found`
 - `"Internal Server Error"` → `internal-server-error`
 - `"Unprocessable Entity"` → `unprocessable-entity`
+
+> **`about:blank` and `title` (RFC 9457 §4.2.1):** when `type` resolves to `"about:blank"`, the RFC says `title` **SHOULD** be the generic HTTP status phrase for that status code. The library fills in that phrase automatically whenever a resolution step (an `HttpException`, `@ProblemType()`, or a mapper) does not itself supply a `title` — but it never rewrites an explicit `title` your `exceptionMapper` or `@ProblemType()` metadata sets. If you set a domain-specific `title` without also setting `type`, the response pairs that title with `"about:blank"`; set a domain-specific `type` URI alongside it (or configure `typeBaseUri`) to keep the two consistent.
 
 ### `instanceStrategy`
 
@@ -311,6 +315,18 @@ Rfc9457Module.forRoot({ catchAllExceptions: true });
 
 **Observability:** when this branch fires (a non-`HttpException` reaches the filter and no `exceptionMapper` claims it), the library logs the exception at `error` level via NestJS's built-in `Logger` (context `Rfc9457ExceptionFilter`) before sending the generic 500. This keeps unexpected throwables visible in server logs even though the response body is intentionally bland. To redirect or replace this logging, use the [`onUnhandled`](#onunhandled) callback described below.
 
+### `suppress5xxDetail`
+
+**Type**: `boolean` | **Default**: `false`
+
+When `true`, the `detail` member is stripped from every problem response with a 5xx status, regardless of its source — an `HttpException` message, an `exceptionMapper` result, or `@ProblemType()` metadata. This is intentionally blunt: it is an opt-in production-hardening switch guaranteeing that no internal error text reaches clients on a server error, rather than a fine-grained per-field filter.
+
+```typescript
+Rfc9457Module.forRoot({ suppress5xxDetail: true });
+```
+
+Default is `false` to match NestJS semantics, where an explicit `HttpException` message is client-facing by design. 4xx responses are never affected.
+
 ### `exceptionMapper`
 
 **Type**: `(exception: unknown, request: Rfc9457Request) => ProblemDetail | null`
@@ -334,6 +350,10 @@ Rfc9457Module.forRoot({
 ```
 
 If the returned `ProblemDetail` omits `status`, the factory falls back to `exception.getStatus()` (if it is an `HttpException`) or `500`.
+
+### Status invariants
+
+RFC 9457 problem responses are error responses, so a `status` supplied by `exceptionMapper` or by `@ProblemType()` metadata must fall in the 400–599 range. A supplied value outside it (e.g. `200` or `304`) is ignored — the library logs a warning and falls back to `exception.getStatus()` (for an `HttpException`) or `500` — rather than honor a status that contradicts an error-shaped body. Note that this check applies only to statuses supplied through those problem-details channels: the `HttpException`'s own status is used as-is, per NestJS framework semantics, so an exception constructed with a non-error status (e.g. `new HttpException('x', 200)`) still emits that status.
 
 ### `onUnhandled`
 
@@ -390,6 +410,36 @@ Rfc9457Module.forRoot({
   }),
 });
 ```
+
+### Callback failure policy
+
+The error path is total: a failure inside any user-supplied callback never
+replaces the problem-details response.
+
+- `exceptionMapper` throws → the failure is logged (context
+  `Rfc9457ExceptionFilter` when the mapper runs in the filter,
+  `ProblemDetailsFactory` when it runs in the factory) and resolution
+  continues down the standard chain (decorator → validation →
+  HttpException → fallback).
+- `validationExceptionMapper` throws → logged (context
+  `ProblemDetailsFactory`); the response falls back to the default Tier 1
+  validation body (`status`, status-phrase `title`,
+  `detail: "Request validation failed"`, and the `errors` array) — it does
+  not re-enter the resolution chain.
+- `instanceStrategy` throws → logged; the `instance` member is omitted.
+- `onUnhandled` throws → logged together with the original exception; the
+  generic 500 problem response is still sent.
+
+Callback errors are never included in the response body.
+
+`exceptionMapper`, `validationExceptionMapper`, and `instanceStrategy` are
+synchronous contracts — their return types don't admit a `Promise`, so an
+`async` callback is rejected at compile time. `onUnhandled` returns `void`,
+which means an `async` callback type-checks; the filter handles that case
+too: if the callback returns a thenable, its rejection is caught, logged
+together with the original exception, and never surfaces as an unhandled
+rejection. The generic 500 response is sent synchronously either way —
+the library does not await the callback.
 
 ---
 
@@ -632,6 +682,21 @@ Response for a DTO with nested validation:
 
 Nested validation errors are preserved as `children` arrays matching the `class-validator` `ValidationError` tree. They are **not** flattened to dotted paths (e.g., `"address.zip"`) — the original structure is preserved.
 
+**Custom status (e.g. 422).** To use a different status, configure both the pipe and the factory:
+
+```typescript
+app.useGlobalPipes(
+  new ValidationPipe({
+    errorHttpStatusCode: 422,
+    exceptionFactory: createRfc9457ValidationPipeExceptionFactory({ status: 422 }),
+  }),
+);
+```
+
+`createRfc9457ValidationPipeExceptionFactory` throws a `RangeError` if `status` is outside the 400–599 error range.
+
+> **Breaking change (vs earlier releases (<=0.4.x)):** `Rfc9457ValidationException` now extends `HttpException` rather than `BadRequestException`, so its status is configurable. Code that narrows on `instanceof BadRequestException` no longer matches; narrow on `Rfc9457ValidationException` (or `HttpException`) instead.
+
 ---
 
 ## Swagger / OpenAPI Integration
@@ -685,6 +750,8 @@ SwaggerModule.setup('/api', app, () => {
 ```
 
 By default, this documents `400` and `500` responses on every route using `ProblemDetailDto`. The generated OpenAPI spec will show `application/problem+json` as the response media type with the correct schema.
+
+**Idempotent by design.** `applyProblemDetailResponses` is safe to call more than once. For a given controller and status, only the first call's options are applied — later calls for that same pair are no-ops. This means lazy document factories that run repeatedly (hot reload, multiple `SwaggerModule.setup()` calls for separate specs, etc.) never duplicate `@ApiResponse` metadata, and you don't need to guard the call site with your own "already applied" bookkeeping.
 
 ### Options
 
@@ -866,23 +933,24 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
 
 ## API Reference
 
-| Export                                        | Kind             | Description                                                                 |
-| --------------------------------------------- | ---------------- | --------------------------------------------------------------------------- |
-| `Rfc9457Module`                               | Class            | Dynamic module. Use `forRoot(options?)` or `forRootAsync(options)`          |
-| `ProblemDetailsFactory`                       | Injectable class | Core resolver; injectable for use outside the HTTP filter                   |
-| `Rfc9457ExceptionFilter`                      | Injectable class | Global exception filter; registered automatically by the module             |
-| `ProblemType`                                 | Decorator        | Class decorator that attaches problem type metadata to exception classes    |
-| `ProblemDetail`                               | Interface        | RFC 9457 response body shape with index signature for extension members     |
-| `ProblemTypeMetadata`                         | Interface        | Decorator options (`type`, `title`, `status`)                               |
-| `Rfc9457ModuleOptions`                        | Interface        | Options accepted by `forRoot()`                                             |
-| `Rfc9457OptionsFactory`                       | Interface        | Implement for `useClass` / `useExisting` async patterns                     |
-| `Rfc9457AsyncModuleOptions`                   | Interface        | Options accepted by `forRootAsync()`                                        |
-| `InstanceStrategy`                            | Type             | Union type for `instanceStrategy` option                                    |
-| `Rfc9457Request`                              | Interface        | Minimal request context compatible with Express and Fastify                 |
-| `Rfc9457ValidationException`                  | Class            | Exception wrapping structured `ValidationError[]`; thrown by Tier 2 factory |
-| `createRfc9457ValidationPipeExceptionFactory` | Function         | Returns an `exceptionFactory` for `ValidationPipe` to enable Tier 2 errors  |
-| `RFC9457_MODULE_OPTIONS`                      | Symbol           | DI token for the module options                                             |
-| `PROBLEM_CONTENT_TYPE`                        | Constant         | `'application/problem+json'`                                                |
+| Export                                         | Kind             | Description                                                                 |
+| ---------------------------------------------- | ---------------- | --------------------------------------------------------------------------- |
+| `Rfc9457Module`                                | Class            | Dynamic module. Use `forRoot(options?)` or `forRootAsync(options)`          |
+| `ProblemDetailsFactory`                        | Injectable class | Core resolver; injectable for use outside the HTTP filter                   |
+| `Rfc9457ExceptionFilter`                       | Injectable class | Global exception filter; registered automatically by the module             |
+| `ProblemType`                                  | Decorator        | Class decorator that attaches problem type metadata to exception classes    |
+| `ProblemDetail`                                | Interface        | RFC 9457 response body shape with index signature for extension members     |
+| `ProblemTypeMetadata`                          | Interface        | Decorator options (`type`, `title`, `status`)                               |
+| `Rfc9457ModuleOptions`                         | Interface        | Options accepted by `forRoot()`                                             |
+| `Rfc9457OptionsFactory`                        | Interface        | Implement for `useClass` / `useExisting` async patterns                     |
+| `Rfc9457AsyncModuleOptions`                    | Interface        | Options accepted by `forRootAsync()`                                        |
+| `InstanceStrategy`                             | Type             | Union type for `instanceStrategy` option                                    |
+| `Rfc9457Request`                               | Interface        | Minimal request context compatible with Express and Fastify                 |
+| `Rfc9457ValidationException`                   | Class            | Exception wrapping structured `ValidationError[]`; thrown by Tier 2 factory |
+| `createRfc9457ValidationPipeExceptionFactory`  | Function         | Returns an `exceptionFactory` for `ValidationPipe` to enable Tier 2 errors  |
+| `Rfc9457ValidationPipeExceptionFactoryOptions` | Interface        | Options for `createRfc9457ValidationPipeExceptionFactory` (`status`)        |
+| `RFC9457_MODULE_OPTIONS`                       | Symbol           | DI token for the module options                                             |
+| `PROBLEM_CONTENT_TYPE`                         | Constant         | `'application/problem+json'`                                                |
 
 **Swagger subpath** (`@camcima/nestjs-rfc9457/swagger`):
 
