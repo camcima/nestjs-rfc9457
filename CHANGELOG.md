@@ -7,13 +7,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 While the version is below 1.0.0, minor releases may contain breaking changes;
 those are marked **BREAKING**.
 
-Maintained by hand: add your entry to `## [Unreleased]` in the same pull request
-as the change. Commit messages already follow
+Release sections are generated from
 [Conventional Commits](https://www.conventionalcommits.org/) (enforced by
-commitlint), so this can be automated later with
-`@release-it/conventional-changelog` if the manual step wears thin.
-
-## [Unreleased]
+commitlint) when a release is cut, so contributors no longer add entries by hand.
+The generator only prepends the new section, so the hand-written entries below
+are preserved.
 
 ## [0.6.0] - 2026-08-19
 
@@ -149,7 +147,6 @@ commitlint), so this can be automated later with
 
 - Initial package scaffold.
 
-[unreleased]: https://github.com/camcima/nestjs-rfc9457/compare/v0.6.0...HEAD
 [0.6.0]: https://github.com/camcima/nestjs-rfc9457/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/camcima/nestjs-rfc9457/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/camcima/nestjs-rfc9457/compare/v0.3.2...v0.4.0
