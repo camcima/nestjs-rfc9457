@@ -841,16 +841,34 @@ describe('ProblemDetailsFactory', () => {
       expect(loggerWarnSpy).not.toHaveBeenCalled();
     });
 
-    it('emits an out-of-range HttpException status unclamped without a false warning', () => {
-      // No mapper: create() step 4 copies exception.getStatus() (302) straight
-      // into result.status, so the fallback computed in resolveStatus is also
-      // 302. The status is emitted unchanged (framework semantics), and no
-      // warning should fire since nothing was actually ignored.
+    it('clamps an out-of-range HttpException status to 500', () => {
+      // A problem document is an error response (RFC 9457 s3), so the factory
+      // never returns a non-error status: 302 is clamped and reported. The
+      // filter delegates such exceptions to Nest before they reach the factory
+      // (see the exception-filter spec); this covers direct factory calls,
+      // where returning something is mandatory.
       const factory = createFactory();
       const { status, body } = factory.create(new HttpException('redirect-ish', 302), mockRequest);
-      expect(status).toBe(302);
-      expect(body.status).toBe(302);
-      expect(loggerWarnSpy).not.toHaveBeenCalled();
+      expect(status).toBe(500);
+      expect(body.status).toBe(500);
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('302'));
+    });
+
+    it('warns once when only the exception carries the out-of-range status', () => {
+      // A mapper that supplies no status at all: resolveStatus falls through to
+      // the exception's own 304, which is clamped. The warning must still fire,
+      // since nothing else would mention the substitution.
+      const factory = createFactory({ exceptionMapper: () => ({ title: 'No status here' }) });
+      const { status } = factory.create(new HttpException('nope', 304), mockRequest);
+      expect(status).toBe(500);
+      expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('304'));
+    });
+
+    it('clamps a non-integer HttpException status', () => {
+      const factory = createFactory();
+      const { status } = factory.create(new HttpException('weird', 4.5), mockRequest);
+      expect(status).toBe(500);
     });
   });
 
@@ -1089,6 +1107,85 @@ describe('ProblemDetailsFactory', () => {
       const factory = createFactory();
       const { body } = factory.create(new InternalServerErrorException('DB down'), mockRequest);
       expect(body.detail).toBe('DB down');
+    });
+  });
+  describe('request-uri instance strategy and Express mount points', () => {
+    it('prefers originalUrl over the router-rewritten url', () => {
+      const factory = createFactory({ instanceStrategy: 'request-uri' });
+      // Inside a mounted Express router, `url` is rewritten relative to the
+      // mount point; `originalUrl` is the path the client actually requested.
+      const { body } = factory.create(new NotFoundException(), {
+        url: '/42',
+        originalUrl: '/api/users/42',
+        method: 'GET',
+      });
+      expect(body.instance).toBe('/api/users/42');
+    });
+
+    it('strips the query string from originalUrl too', () => {
+      const factory = createFactory({ instanceStrategy: 'request-uri' });
+      const { body } = factory.create(new NotFoundException(), {
+        url: '/42?token=secret',
+        originalUrl: '/api/users/42?token=secret',
+        method: 'GET',
+      });
+      expect(body.instance).toBe('/api/users/42');
+      expect(JSON.stringify(body)).not.toContain('secret');
+    });
+
+    it('falls back to url when originalUrl is absent (Fastify)', () => {
+      const factory = createFactory({ instanceStrategy: 'request-uri' });
+      const { body } = factory.create(new NotFoundException(), {
+        url: '/api/users/42',
+        method: 'GET',
+      });
+      expect(body.instance).toBe('/api/users/42');
+    });
+  });
+
+  describe('validation error flattening: shared vs cyclic structures', () => {
+    it('emits a subtree shared by two siblings under both parents', () => {
+      // Not something class-validator produces, but the public API accepts
+      // unknown[]: a shared (acyclic) node is legitimate data, not a cycle,
+      // and must not be dropped on its second appearance.
+      const shared = { property: 'street', constraints: { isString: 'street must be a string' } };
+      const home = { property: 'home', children: [shared] };
+      const work = { property: 'work', children: [shared] };
+      const factory = createFactory();
+      const { body } = factory.create(new Rfc9457ValidationException([home, work]), mockRequest);
+      const errors = body.errors as Record<string, unknown>[];
+      expect(errors).toHaveLength(2);
+      expect(errors[0].children).toEqual([shared]);
+      expect(errors[1].children).toEqual([shared]);
+    });
+
+    it('emits a node repeated twice in the same children array twice', () => {
+      const shared = { property: 'tag', constraints: { isString: 'tag must be a string' } };
+      const parent = { property: 'tags', children: [shared, shared] };
+      const factory = createFactory();
+      const { body } = factory.create(new Rfc9457ValidationException([parent]), mockRequest);
+      const errors = body.errors as Record<string, unknown>[];
+      expect(errors[0].children).toHaveLength(2);
+    });
+
+    it('still breaks a direct cycle', () => {
+      const cyclic: Record<string, unknown> = { property: 'self' };
+      cyclic.children = [cyclic];
+      const factory = createFactory();
+      const { body } = factory.create(new Rfc9457ValidationException([cyclic]), mockRequest);
+      const errors = body.errors as Record<string, unknown>[];
+      expect(errors).toEqual([{ property: 'self' }]);
+      expect(() => JSON.stringify(body)).not.toThrow();
+    });
+
+    it('still breaks an indirect cycle', () => {
+      const parent: Record<string, unknown> = { property: 'parent' };
+      const child: Record<string, unknown> = { property: 'child', children: [parent] };
+      parent.children = [child];
+      const factory = createFactory();
+      const { body } = factory.create(new Rfc9457ValidationException([parent]), mockRequest);
+      expect(() => JSON.stringify(body)).not.toThrow();
+      expect(body.errors).toEqual([{ property: 'parent', children: [{ property: 'child' }] }]);
     });
   });
 });

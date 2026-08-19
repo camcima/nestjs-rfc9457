@@ -41,6 +41,39 @@ describe('Fastify E2E', () => {
       });
     });
 
+    it('returns extension members from a ProblemDetailException', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .get('/test/problem-detail')
+        .expect(402);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body).toEqual({
+        type: 'https://api.example.com/problems/insufficient-funds',
+        title: 'Insufficient Funds',
+        status: 402,
+        detail: 'Your balance is too low to cover this transfer.',
+        balance: 30,
+        cost: 50,
+      });
+    });
+
+    it('sends headers carried by a ProblemDetailException', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .get('/test/rate-limited')
+        .expect(429);
+
+      expect(headers['retry-after']).toBe('60');
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.retryAfterSeconds).toBe(60);
+    });
+
+    it('delegates a non-error HttpException status to NestJS', async () => {
+      const { headers } = await request(app.getHttpServer()).get('/test/redirect-ish').expect(302);
+
+      // Not a problem document: RFC 9457 covers error responses only.
+      expect(headers['content-type']).not.toMatch(/problem\+json/);
+    });
+
     it('returns problem details for @ProblemType decorated exception', async () => {
       const { body } = await request(app.getHttpServer()).get('/test/custom-exception').expect(422);
 

@@ -16,6 +16,18 @@ commit-msg:
 pre-push:
   commands:
     gitleaks:
-      run: gitleaks git --no-banner --redact -v
+      # Scan only the commits actually being pushed. `gitleaks git` without a
+      # range re-scans the entire history on every push, which gets slower with
+      # every commit and reports nothing new. {push_files} is unavailable for
+      # this hook, so the range is derived from the upstream ref when there is
+      # one and falls back to the last commit otherwise (a fresh branch with no
+      # upstream yet). Run `pnpm run audit:secrets` for a full-history scan.
+      run: |
+        range=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+        if [ -n "$range" ]; then
+          gitleaks git --no-banner --redact -v --log-opts="$range..HEAD"
+        else
+          gitleaks git --no-banner --redact -v --log-opts="-1 HEAD"
+        fi
       skip:
         - ref: main

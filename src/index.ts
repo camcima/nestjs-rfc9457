@@ -3,6 +3,11 @@ export { ProblemDetailsFactory } from './problem-details.factory';
 export { Rfc9457ExceptionFilter } from './rfc9457.exception-filter';
 export { ProblemType } from './problem-type.decorator';
 export {
+  ProblemDetailException,
+  ProblemDetailExceptionOptions,
+  ProblemDetailWithStatus,
+} from './problem-detail.exception';
+export {
   ProblemDetail,
   ProblemTypeMetadata,
   Rfc9457ModuleOptions,

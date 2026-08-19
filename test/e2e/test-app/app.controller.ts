@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpException,
   NotFoundException,
   Post,
   Res,
@@ -9,6 +10,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { InsufficientFundsException } from './test.exceptions';
+import { ProblemDetailException } from '../../../src/problem-detail.exception';
 import { CreateUserDto } from './test.dto';
 import { createRfc9457ValidationPipeExceptionFactory } from '../../../src/validation/rfc9457-validation-pipe-exception.factory';
 
@@ -44,6 +46,33 @@ export class AppController {
   @UsePipes(new ValidationPipe({ errorHttpStatusCode: 422 }))
   validate422(@Body() _dto: CreateUserDto): string {
     return 'ok';
+  }
+
+  @Get('problem-detail')
+  problemDetail(): never {
+    throw new ProblemDetailException({
+      type: 'https://api.example.com/problems/insufficient-funds',
+      title: 'Insufficient Funds',
+      status: 402,
+      detail: 'Your balance is too low to cover this transfer.',
+      balance: 30,
+      cost: 50,
+    });
+  }
+
+  @Get('rate-limited')
+  rateLimited(): never {
+    throw new ProblemDetailException(
+      { status: 429, title: 'Too Many Requests', retryAfterSeconds: 60 },
+      { headers: { 'Retry-After': '60' } },
+    );
+  }
+
+  @Get('redirect-ish')
+  redirectIsh(): never {
+    // A non-error HttpException: RFC 9457 does not cover 3xx, so the filter
+    // hands this back to NestJS rather than emitting problem+json.
+    throw new HttpException('moved', 302);
   }
 
   @Get('unhandled')

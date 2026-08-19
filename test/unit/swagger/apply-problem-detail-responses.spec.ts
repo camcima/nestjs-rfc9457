@@ -261,4 +261,52 @@ describe('applyProblemDetailResponses', () => {
 
     await app.close();
   });
+  describe('a controller class shared by two applications', () => {
+    it('applies once, keeping the description clean (first call wins)', async () => {
+      // @ApiResponse stores metadata on the class, so two apps sharing a
+      // controller class unavoidably share its annotations. Re-applying per app
+      // would append a second response object, which @nestjs/swagger merges into
+      // one entry with a doubled description ("Bad Request\n\nBad Request").
+      // First-wins keeps the emitted spec well-formed.
+      @Controller('shared')
+      class SharedController {
+        @Get()
+        index() {
+          return 'ok';
+        }
+      }
+
+      @Module({ imports: [DiscoveryModule], controllers: [SharedController] })
+      class SharedModule {}
+
+      async function bootstrap() {
+        const moduleRef = await Test.createTestingModule({ imports: [SharedModule] }).compile();
+        const app = moduleRef.createNestApplication();
+        await app.init();
+        return app;
+      }
+
+      const appA = await bootstrap();
+      const appB = await bootstrap();
+      try {
+        applyProblemDetailResponses(appA, { statuses: [400] });
+        applyProblemDetailResponses(appB, { statuses: [400], validationStatuses: [400] });
+
+        const document = SwaggerModule.createDocument(appB, new DocumentBuilder().build());
+        const response = (document.paths['/shared'] as any)?.get?.responses?.['400'];
+
+        expect(response.description).toBe('Bad Request');
+        // The first call's options won: the base DTO, not the validation one.
+        expect(
+          getResponseContent((document.paths['/shared'] as any)?.get?.responses, '400').schema.$ref,
+        ).toContain('ProblemDetailDto');
+        expect(
+          getResponseContent((document.paths['/shared'] as any)?.get?.responses, '400').schema.$ref,
+        ).not.toContain('Validation');
+      } finally {
+        await appA.close();
+        await appB.close();
+      }
+    });
+  });
 });

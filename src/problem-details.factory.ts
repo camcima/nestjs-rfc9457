@@ -8,6 +8,7 @@ import {
   Rfc9457Request,
 } from './rfc9457.interfaces';
 import { PROBLEM_TYPE_METADATA_KEY, RFC9457_MODULE_OPTIONS } from './rfc9457.constants';
+import { ProblemDetailException } from './problem-detail.exception';
 import { Rfc9457ValidationException } from './validation/rfc9457-validation.exception';
 import { toSlug } from './utils/slug';
 
@@ -32,6 +33,10 @@ export class ProblemDetailsFactory {
   /**
    * Resolve an exception to a Problem Details response.
    * Always returns a result — the factory owns the fallback behavior.
+   *
+   * The returned `status` is always an error status (400-599): a problem
+   * document is by definition an error response, so a non-error status
+   * reaching the factory is clamped to 500 and logged.
    *
    * @param exception - The caught exception (any type)
    * @param request - The incoming request context
@@ -66,6 +71,10 @@ export class ProblemDetailsFactory {
       }
     }
 
+    // The mapper has the final say when it claims an exception: steps 2 and 3
+    // enrich only what it left unresolved.
+    const claimedByMapper = result !== null;
+
     // Step 2: @ProblemType() decorator metadata
     if (!result && exception != null && typeof exception === 'object') {
       const constructor = (exception as object).constructor;
@@ -86,12 +95,20 @@ export class ProblemDetailsFactory {
       }
     }
 
-    // Step 3: Validation handling
+    // Step 3: ProblemDetailException — a problem document supplied at the throw
+    // site, extension members included. Merged OVER any decorator metadata
+    // resolved above: the decorator declares the reusable problem type, the
+    // instance declares what happened this time, so the instance wins per-member.
+    if (!claimedByMapper && exception instanceof ProblemDetailException) {
+      result = { ...(result ?? {}), ...exception.problem };
+    }
+
+    // Step 4: Validation handling
     if (!result) {
       result = this.handleValidation(exception, request);
     }
 
-    // Step 4: Default HttpException handling
+    // Step 5: Default HttpException handling
     if (!result && exception instanceof HttpException) {
       const exceptionStatus = exception.getStatus();
       result = {
@@ -104,7 +121,7 @@ export class ProblemDetailsFactory {
       }
     }
 
-    // Step 5: Unknown exception fallback
+    // Step 6: Unknown exception fallback
     // Internal safety net: the filter is responsible for routing only appropriate
     // exceptions to the factory. If we reach here, it means no resolution step
     // matched. Produce a generic 500 regardless of catchAllExceptions — this is
@@ -153,25 +170,41 @@ export class ProblemDetailsFactory {
     return { status: httpStatus, body: result };
   }
 
+  /** A problem document is an error response (RFC 9457): 400-599 only. */
+  private isErrorStatus(status: unknown): status is number {
+    return typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599;
+  }
+
   private resolveStatus(result: ProblemDetail, exception: unknown): number {
-    const fallback = exception instanceof HttpException ? exception.getStatus() : 500;
+    const rawFallback = exception instanceof HttpException ? exception.getStatus() : 500;
+    // The fallback is clamped too: `new HttpException('moved', 302)` must not
+    // produce a 302 carrying an application/problem+json body. The filter
+    // delegates such exceptions to Nest before they ever reach the factory, so
+    // this only applies to direct factory calls, where returning *something*
+    // is mandatory and 500 is the only honest answer.
+    const fallback = this.isErrorStatus(rawFallback) ? rawFallback : 500;
+
     if (typeof result.status === 'number') {
-      if (result.status >= 400 && result.status < 600) {
+      if (this.isErrorStatus(result.status)) {
         return result.status;
       }
-      // A problem details response is an error response (RFC 9457). A
-      // non-error status here is a configuration bug (mapper/decorator
-      // typo) — surface it in logs and fall back rather than emit it. Only
-      // warn when the fallback actually differs from what was supplied:
-      // e.g. `new HttpException('x', 302)` with no mapper copies 302 into
-      // result.status at create() step 4, and the fallback (302 again) would
-      // be emitted unchanged — warning there would falsely claim the status
-      // was ignored.
-      if (result.status !== fallback) {
-        this.logger.warn(
-          `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
-        );
-      }
+      // A non-error status here is a configuration bug (mapper/decorator typo)
+      // — surface it in logs and fall back rather than emit it. The fallback is
+      // itself clamped to an error status, so it can never equal the value being
+      // rejected here; the warning therefore always reports a real substitution
+      // and needs no "did it actually change?" guard.
+      this.logger.warn(
+        `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
+      );
+      return fallback;
+    }
+
+    // No status in the body: the exception's own status was used, so report it
+    // if the clamp changed it (nothing else would mention it).
+    if (rawFallback !== fallback) {
+      this.logger.warn(
+        `Ignoring exception status ${rawFallback}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
+      );
     }
     return fallback;
   }
@@ -206,7 +239,13 @@ export class ProblemDetailsFactory {
   private resolveInstance(request: Rfc9457Request, exception: unknown): string | undefined {
     const strategy = this.options.instanceStrategy || 'none';
     if (strategy === 'none') return undefined;
-    if (strategy === 'request-uri') return request.url.split('?')[0];
+    if (strategy === 'request-uri') {
+      // Prefer originalUrl: Express rewrites `url` relative to the mount point
+      // inside a mounted router, which would report a path the client never
+      // requested. Fastify has no originalUrl and its `url` is already stable.
+      const url = request.originalUrl ?? request.url;
+      return url.split('?')[0];
+    }
     if (strategy === 'uuid') return `urn:uuid:${randomUUID()}`;
     if (typeof strategy === 'function') {
       try {
@@ -256,13 +295,13 @@ export class ProblemDetailsFactory {
     // no longer imports class-validator at runtime (validationErrors is unknown[]).
     if (exception instanceof Rfc9457ValidationException) {
       const status = exception.getStatus();
-      const seen = new WeakSet<object>();
+      const path = new WeakSet<object>();
       return {
         status,
         title: http.STATUS_CODES[status] || 'Unknown Error',
         detail: 'Request validation failed',
         errors: exception.validationErrors
-          .map((err) => this.flattenValidationError(err, seen))
+          .map((err) => this.flattenValidationError(err, path))
           .filter((err): err is Record<string, unknown> => err !== null),
       };
     }
@@ -337,42 +376,52 @@ export class ProblemDetailsFactory {
    * Defensively flattens one validation-error entry. The public
    * Rfc9457ValidationException accepts unknown[], so entries may be anything:
    * skip non-objects, keep only a string `property`, a string-valued
-   * `constraints` map, and array `children`; the shared `seen` set breaks
-   * cycles. Returns null for entries with no salvageable content shape.
+   * `constraints` map, and array `children`.
+   *
+   * `path` holds the ancestors of the current entry — the entries on the way
+   * down, not every entry ever seen — so a cycle is refused while an object
+   * legitimately shared between two sibling subtrees is still emitted under
+   * both. Hence the delete before every return: leaving the entry in would
+   * turn the guard into a global visited-set and silently drop such shared
+   * subtrees on their second appearance.
    */
   private flattenValidationError(
     error: unknown,
-    seen: WeakSet<object>,
+    path: WeakSet<object>,
   ): Record<string, unknown> | null {
-    if (typeof error !== 'object' || error === null || seen.has(error)) {
+    if (typeof error !== 'object' || error === null || path.has(error)) {
       return null;
     }
-    seen.add(error);
-    const source = error as Record<string, unknown>;
-    const result: Record<string, unknown> = {};
-    if (typeof source.property === 'string') {
-      result.property = source.property;
-    }
-    if (
-      typeof source.constraints === 'object' &&
-      source.constraints !== null &&
-      !Array.isArray(source.constraints)
-    ) {
-      const constraints = Object.fromEntries(
-        Object.entries(source.constraints).filter(([, value]) => typeof value === 'string'),
-      );
-      if (Object.keys(constraints).length > 0) {
-        result.constraints = constraints;
+    path.add(error);
+    try {
+      const source = error as Record<string, unknown>;
+      const result: Record<string, unknown> = {};
+      if (typeof source.property === 'string') {
+        result.property = source.property;
       }
-    }
-    if (Array.isArray(source.children) && source.children.length > 0) {
-      const children = source.children
-        .map((child) => this.flattenValidationError(child, seen))
-        .filter((child): child is Record<string, unknown> => child !== null);
-      if (children.length > 0) {
-        result.children = children;
+      if (
+        typeof source.constraints === 'object' &&
+        source.constraints !== null &&
+        !Array.isArray(source.constraints)
+      ) {
+        const constraints = Object.fromEntries(
+          Object.entries(source.constraints).filter(([, value]) => typeof value === 'string'),
+        );
+        if (Object.keys(constraints).length > 0) {
+          result.constraints = constraints;
+        }
       }
+      if (Array.isArray(source.children) && source.children.length > 0) {
+        const children = source.children
+          .map((child) => this.flattenValidationError(child, path))
+          .filter((child): child is Record<string, unknown> => child !== null);
+        if (children.length > 0) {
+          result.children = children;
+        }
+      }
+      return Object.keys(result).length > 0 ? result : null;
+    } finally {
+      path.delete(error);
     }
-    return Object.keys(result).length > 0 ? result : null;
   }
 }

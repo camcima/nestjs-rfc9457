@@ -18,7 +18,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "!dist/.tsbuildinfo"
   ],
   "engines": {
     "node": ">=20"

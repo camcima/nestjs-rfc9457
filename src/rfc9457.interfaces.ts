@@ -10,6 +10,14 @@ import { Type } from '@nestjs/common';
 export interface Rfc9457Request {
   url: string;
   method: string;
+  /**
+   * Express sets this to the original, un-rewritten request URL. Mounted
+   * routers and path-mounted middleware mutate `url` relative to the mount
+   * point, so `originalUrl` is the stable client-facing path. The
+   * `'request-uri'` instance strategy prefers it when present and falls back
+   * to `url` (Fastify does not define it, and there `url` is already stable).
+   */
+  originalUrl?: string;
 }
 
 /**
@@ -95,10 +103,40 @@ export interface Rfc9457ModuleOptions {
    * callback to redirect logging elsewhere (custom metric, structured pino
    * event, sink-specific adapter) or to suppress the default log entirely.
    *
-   * The filter **still** sends the generic problem-details response after
-   * invoking this callback — it exists purely for observability.
+   * The third parameter carries the fully resolved problem body that is about
+   * to be sent, so the `instance` identifier generated for this occurrence
+   * (e.g. under `instanceStrategy: 'uuid'`) can be recorded alongside the
+   * stack trace and correlated with the client's copy. Mutating it has no
+   * effect — the response is serialized from the same object immediately
+   * after this callback returns, so treat it as read-only.
+   *
+   * The filter **still** sends the problem-details response after invoking
+   * this callback — it exists purely for observability.
    */
-  onUnhandled?: (exception: unknown, request: Rfc9457Request) => void;
+  onUnhandled?: (exception: unknown, request: Rfc9457Request, problem: ProblemDetail) => void;
+  /**
+   * Supplies transport response headers that accompany a problem response —
+   * `Retry-After` on 429/503, `WWW-Authenticate` on 401, and similar status
+   * companions that belong in the header block rather than the body.
+   *
+   * Called once per problem response with the fully resolved body, the
+   * originating exception, and the request. Return `undefined` (or an empty
+   * object) to add nothing. Header names are passed to the HTTP adapter
+   * verbatim. `Content-Type` is reserved by the library and cannot be
+   * overridden here.
+   *
+   * Headers carried by a {@link ProblemDetailException} are applied first;
+   * whatever this callback returns is merged over them, so a global policy
+   * can override a throw-site value.
+   *
+   * Like every other callback, a throw here is contained: it is logged and
+   * the response is sent without the extra headers.
+   */
+  responseHeaders?: (
+    problem: ProblemDetail,
+    exception: unknown,
+    request: Rfc9457Request,
+  ) => Record<string, string> | undefined;
 }
 
 export interface Rfc9457OptionsFactory {

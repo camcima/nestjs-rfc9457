@@ -52,6 +52,55 @@ jobs:
           directory: coverage
           fail_ci_if_error: true
 
+  peer-compat:
+    name: Lowest supported peers (Nest 10, Swagger 7, class-validator 0.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+      # peerDependencies advertise support for majors older than the ones the
+      # main matrix installs, so without this job that claim is never executed.
+      # Pin every peer to its oldest supported version and run the suite.
+      #
+      # The pnpm.overrides block is dropped first: those are security pins for
+      # THIS repo's dev tree (they force path-to-regexp >=8, which Express 4 —
+      # what Nest 10 uses — cannot load). They are not published to consumers,
+      # so applying them here would fail the job for a reason no user can hit.
+      - name: Pin peers to the oldest supported versions
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            delete pkg.pnpm;
+            Object.assign(pkg.devDependencies, {
+              "@nestjs/common": "10.4.15",
+              "@nestjs/core": "10.4.15",
+              "@nestjs/platform-express": "10.4.15",
+              "@nestjs/testing": "10.4.15",
+              "@nestjs/swagger": "7.4.2",
+              "class-validator": "0.14.1",
+              "reflect-metadata": "0.1.14",
+            });
+            // platform-fastify is pinned to the Nest 10 line so its peer range
+            // resolves; the Fastify adapter itself is exercised by the main
+            // test matrix against current versions.
+            pkg.devDependencies["@nestjs/platform-fastify"] = "10.4.15";
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run test:unit
+      - name: Express e2e
+        run: npx vitest run test/e2e/express.e2e-spec.ts
+      - name: Fastify e2e
+        run: npx vitest run test/e2e/fastify.e2e-spec.ts
+
   build:
     runs-on: ubuntu-latest
     steps:
