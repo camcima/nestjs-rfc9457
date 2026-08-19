@@ -189,14 +189,13 @@ export class ProblemDetailsFactory {
         return result.status;
       }
       // A non-error status here is a configuration bug (mapper/decorator typo)
-      // — surface it in logs and fall back rather than emit it. Only warn when
-      // the fallback actually differs from what was supplied, so a status that
-      // is emitted unchanged never draws a warning claiming it was ignored.
-      if (result.status !== fallback) {
-        this.logger.warn(
-          `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
-        );
-      }
+      // — surface it in logs and fall back rather than emit it. The fallback is
+      // itself clamped to an error status, so it can never equal the value being
+      // rejected here; the warning therefore always reports a real substitution
+      // and needs no "did it actually change?" guard.
+      this.logger.warn(
+        `Ignoring supplied problem status ${result.status}: problem details responses must use an error status (400-599); falling back to ${fallback}`,
+      );
       return fallback;
     }
 

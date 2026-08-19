@@ -548,6 +548,33 @@ describe('committed response guard', () => {
       expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('tolerates a thrown null', () => {
+      // `throw null` is legal JavaScript and reaches the filter as-is.
+      const { filter, mockHost } = createMocks({ catchAllExceptions: false });
+      expect(() => {
+        try {
+          filter.catch(null, mockHost);
+        } catch {
+          // Expected: BaseExceptionFilter.catch fails in this test environment
+        }
+      }).not.toThrow();
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+
+    it('tolerates a thrown object with no constructor', () => {
+      // Object.create(null) has no prototype, so `constructor` is undefined and
+      // the metadata lookup would throw if the guard were not there.
+      const { filter, mockHost } = createMocks({ catchAllExceptions: false });
+      expect(() => {
+        try {
+          filter.catch(Object.create(null), mockHost);
+        } catch {
+          // Expected: BaseExceptionFilter.catch fails in this test environment
+        }
+      }).not.toThrow();
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+
     it('stays silent for an undecorated exception', () => {
       const { filter, mockHost } = createMocks({ catchAllExceptions: false });
       try {
@@ -654,6 +681,31 @@ describe('committed response guard', () => {
         expect(loggerErrorSpy).toHaveBeenCalledWith(
           expect.stringContaining('responseHeaders threw'),
           expect.any(String),
+        );
+      } finally {
+        loggerErrorSpy.mockRestore();
+      }
+    });
+
+    it('logs an undefined trace slot when responseHeaders throws a non-Error value', () => {
+      const loggerErrorSpy = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      try {
+        const { filter, mockHost, mockHttpAdapter } = createMocks({
+          responseHeaders: () => {
+            throw 'a string, not an Error';
+          },
+        });
+        filter.catch(new NotFoundException('gone'), mockHost);
+        expect(loggerErrorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('responseHeaders threw'),
+          undefined,
+        );
+        expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          404,
         );
       } finally {
         loggerErrorSpy.mockRestore();
