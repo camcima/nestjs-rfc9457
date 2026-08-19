@@ -3,7 +3,23 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "stripInternal": true
+    "stripInternal": true,
+    // Keep JSDoc in the emitted .d.ts files: the option-level documentation in
+    // rfc9457.interfaces.ts is the API reference consumers see on hover.
+    // `stripInternal` still removes @internal members from the public surface.
+    "removeComments": false,
+    // Source maps are published, so the sources they point at must be too
+    // (see the `files` array in package.json). declarationMap additionally
+    // makes go-to-definition land on the real source instead of the .d.ts.
+    "declarationMap": true,
+    // Keep the incremental cache INSIDE the output directory. Left at its
+    // default (tsconfig.build.tsbuildinfo in the project root) it outlives
+    // `rm -rf dist`, and the next build considers every file up to date and
+    // emits nothing at all — silently, with exit code 0. Since
+    // `prepublishOnly` runs this build and `files` publishes `dist`, that
+    // failure mode ships a package with no compiled output in it. Sharing a
+    // lifetime with the output makes a stale cache impossible.
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
   },
   "include": ["src/**/*"],
   "exclude": ["test", "dist", "node_modules"]
