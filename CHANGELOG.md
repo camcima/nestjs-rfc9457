@@ -15,6 +15,8 @@ commitlint), so this can be automated later with
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-19
+
 ### Added
 
 - `ProblemDetailException` for throwing a complete problem document, including
@@ -147,7 +149,8 @@ commitlint), so this can be automated later with
 
 - Initial package scaffold.
 
-[unreleased]: https://github.com/camcima/nestjs-rfc9457/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/camcima/nestjs-rfc9457/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/camcima/nestjs-rfc9457/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/camcima/nestjs-rfc9457/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/camcima/nestjs-rfc9457/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/camcima/nestjs-rfc9457/compare/v0.3.1...v0.3.2
