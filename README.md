@@ -1287,7 +1287,7 @@ pnpm run build
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/) enforced by commitlint, and [Lefthook](https://github.com/evilmartians/lefthook) for pre-commit hooks (lint + format on staged files) plus a pre-push gitleaks scan of the commits being pushed.
 
-User-facing changes need an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in the same pull request as the change.
+[CHANGELOG.md](CHANGELOG.md) is generated from those commit messages when a release is cut, so a pull request no longer needs a hand-written changelog entry — the commit subject is the entry. Entries written by hand before this switch are kept: the generator only prepends the new release section.
 
 ---
 

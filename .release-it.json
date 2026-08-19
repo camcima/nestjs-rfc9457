@@ -8,10 +8,73 @@
   },
   "npm": {
     "publish": true,
-    "publishArgs": ["--access=public"]
+    "publishArgs": [
+      "--access=public"
+    ]
   },
   "hooks": {
-    "before:init": ["pnpm run lint", "pnpm test"],
+    "before:init": [
+      "pnpm run lint",
+      "pnpm test"
+    ],
     "after:bump": "pnpm run build"
+  },
+  "plugins": {
+    "@release-it/conventional-changelog": {
+      "infile": "CHANGELOG.md",
+      "header": "# Changelog\n\nAll notable changes to this project are documented here.\n\nThe format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and\nthis project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\nWhile the version is below 1.0.0, minor releases may contain breaking changes;\nthose are marked **BREAKING**.\n\nRelease sections are generated from\n[Conventional Commits](https://www.conventionalcommits.org/) (enforced by\ncommitlint) when a release is cut, so contributors no longer add entries by hand.\nThe generator only prepends the new section, so the hand-written entries below\nare preserved.",
+      "ignoreRecommendedBump": true,
+      "preset": {
+        "name": "conventionalcommits",
+        "types": [
+          {
+            "type": "feat",
+            "section": "Features"
+          },
+          {
+            "type": "fix",
+            "section": "Bug Fixes"
+          },
+          {
+            "type": "perf",
+            "section": "Performance"
+          },
+          {
+            "type": "revert",
+            "section": "Reverts"
+          },
+          {
+            "type": "docs",
+            "section": "Documentation",
+            "effect": "changelog"
+          },
+          {
+            "type": "refactor",
+            "section": "Refactoring",
+            "effect": "changelog"
+          },
+          {
+            "type": "build",
+            "effect": "hidden"
+          },
+          {
+            "type": "chore",
+            "effect": "hidden"
+          },
+          {
+            "type": "ci",
+            "effect": "hidden"
+          },
+          {
+            "type": "style",
+            "effect": "hidden"
+          },
+          {
+            "type": "test",
+            "effect": "hidden"
+          }
+        ]
+      }
+    }
   }
 }
