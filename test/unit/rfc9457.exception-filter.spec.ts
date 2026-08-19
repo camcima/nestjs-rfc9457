@@ -1,8 +1,10 @@
-import { ArgumentsHost, Logger, NotFoundException } from '@nestjs/common';
+import { ArgumentsHost, HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { Rfc9457ExceptionFilter } from '../../src/rfc9457.exception-filter';
 import { ProblemDetailsFactory } from '../../src/problem-details.factory';
 import { Rfc9457ModuleOptions } from '../../src/rfc9457.interfaces';
+import { ProblemDetailException } from '../../src/problem-detail.exception';
+import { ProblemType } from '../../src/problem-type.decorator';
 import type { MockInstance } from 'vitest';
 
 function createMocks(options: Rfc9457ModuleOptions = {}) {
@@ -296,7 +298,11 @@ describe('Rfc9457ExceptionFilter', () => {
       filter.catch(err, mockHost);
 
       expect(onUnhandled).toHaveBeenCalledTimes(1);
-      expect(onUnhandled).toHaveBeenCalledWith(err, mockRequest);
+      expect(onUnhandled).toHaveBeenCalledWith(
+        err,
+        mockRequest,
+        expect.objectContaining({ status: 500, title: 'Internal Server Error' }),
+      );
       expect(loggerErrorSpy).not.toHaveBeenCalled();
     });
 
@@ -456,5 +462,250 @@ describe('committed response guard', () => {
       expect.stringContaining('headers already sent'),
       '[object Object]',
     );
+  });
+  describe('non-error HttpException statuses', () => {
+    it('delegates a 3xx HttpException to NestJS instead of emitting problem+json', () => {
+      // RFC 9457 s3 scopes problem documents to error responses. A 302 carrying
+      // application/problem+json would be non-conformant, so Nest's default
+      // handler sends its standard body at the requested status instead.
+      const { filter, mockHost, mockHttpAdapter } = createMocks();
+      try {
+        filter.catch(new HttpException('moved', 302), mockHost);
+      } catch {
+        // Expected: BaseExceptionFilter.catch fails in this test environment
+      }
+      expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+      expect(mockHttpAdapter.setHeader).not.toHaveBeenCalled();
+    });
+
+    it('delegates a 2xx HttpException as well', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks();
+      try {
+        filter.catch(new HttpException('fine', 200), mockHost);
+      } catch {
+        // Expected in this test environment
+      }
+      expect(mockHttpAdapter.reply).not.toHaveBeenCalled();
+    });
+
+    it('still lets an exceptionMapper claim a non-error HttpException', () => {
+      const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
+        exceptionMapper: () => ({ status: 410, title: 'Gone for good' }),
+      });
+      filter.catch(new HttpException('moved', 302), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+        mockResponse,
+        expect.objectContaining({ status: 410, title: 'Gone for good' }),
+        410,
+      );
+    });
+
+    it('handles 4xx and 5xx HttpExceptions normally', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks();
+      filter.catch(new HttpException('teapot', 418), mockHost);
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(expect.anything(), expect.anything(), 418);
+    });
+  });
+
+  describe('@ProblemType() on a delegated non-HttpException', () => {
+    let loggerWarnSpy: MockInstance;
+
+    beforeEach(() => {
+      loggerWarnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      loggerWarnSpy.mockRestore();
+    });
+
+    it('warns that the decorator metadata was ignored', () => {
+      @ProblemType({ type: 'https://example.com/problems/domain', status: 409 })
+      class DomainError extends Error {}
+
+      const { filter, mockHost } = createMocks({ catchAllExceptions: false });
+      try {
+        filter.catch(new DomainError('nope'), mockHost);
+      } catch {
+        // Expected: BaseExceptionFilter.catch fails in this test environment
+      }
+      expect(loggerWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('DomainError carries @ProblemType() metadata'),
+      );
+    });
+
+    it('warns only once per exception class', () => {
+      @ProblemType({ status: 409 })
+      class RepeatedError extends Error {}
+
+      const { filter, mockHost } = createMocks({ catchAllExceptions: false });
+      for (let i = 0; i < 3; i++) {
+        try {
+          filter.catch(new RepeatedError('again'), mockHost);
+        } catch {
+          // Expected in this test environment
+        }
+      }
+      expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays silent for an undecorated exception', () => {
+      const { filter, mockHost } = createMocks({ catchAllExceptions: false });
+      try {
+        filter.catch(new Error('plain'), mockHost);
+      } catch {
+        // Expected in this test environment
+      }
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+
+    it('stays silent when catchAllExceptions handles the exception anyway', () => {
+      @ProblemType({ status: 409 })
+      class HandledError extends Error {}
+
+      const { filter, mockHost } = createMocks({ catchAllExceptions: true });
+      filter.catch(new HandledError('handled'), mockHost);
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('response headers', () => {
+    it('sends headers carried by a ProblemDetailException', () => {
+      const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks();
+      filter.catch(
+        new ProblemDetailException(
+          { status: 429, title: 'Too Many Requests' },
+          {
+            headers: { 'Retry-After': '60' },
+          },
+        ),
+        mockHost,
+      );
+      expect(mockHttpAdapter.setHeader).toHaveBeenCalledWith(mockResponse, 'Retry-After', '60');
+      expect(mockHttpAdapter.reply).toHaveBeenCalledWith(expect.anything(), expect.anything(), 429);
+    });
+
+    it('applies the responseHeaders callback', () => {
+      const { filter, mockHost, mockHttpAdapter, mockResponse, mockRequest } = createMocks({
+        responseHeaders: (problem) =>
+          problem.status === 401 ? { 'WWW-Authenticate': 'Bearer' } : undefined,
+      });
+      filter.catch(new HttpException('nope', 401), mockHost);
+      expect(mockHttpAdapter.setHeader).toHaveBeenCalledWith(
+        mockResponse,
+        'WWW-Authenticate',
+        'Bearer',
+      );
+      expect(mockRequest).toBeDefined();
+    });
+
+    it('passes the resolved problem, exception and request to responseHeaders', () => {
+      const responseHeaders = vi.fn().mockReturnValue(undefined);
+      const { filter, mockHost, mockRequest } = createMocks({ responseHeaders });
+      const exception = new NotFoundException('gone');
+      filter.catch(exception, mockHost);
+      expect(responseHeaders).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 404, title: 'Not Found' }),
+        exception,
+        mockRequest,
+      );
+    });
+
+    it('lets responseHeaders override a throw-site header', () => {
+      const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
+        responseHeaders: () => ({ 'Retry-After': '120' }),
+      });
+      filter.catch(
+        new ProblemDetailException({ status: 429 }, { headers: { 'Retry-After': '60' } }),
+        mockHost,
+      );
+      const retryAfterCalls = mockHttpAdapter.setHeader.mock.calls.filter(
+        (call: unknown[]) => call[1] === 'Retry-After',
+      );
+      expect(retryAfterCalls).toEqual([[mockResponse, 'Retry-After', '120']]);
+    });
+
+    it('keeps Content-Type reserved even when a callback tries to replace it', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        responseHeaders: () => ({ 'Content-Type': 'text/plain' }),
+      });
+      filter.catch(new NotFoundException('gone'), mockHost);
+      const calls = mockHttpAdapter.setHeader.mock.calls;
+      const last = calls[calls.length - 1];
+      expect(last[1]).toBe('Content-Type');
+      expect(last[2]).toBe('application/problem+json');
+    });
+
+    it('still sends the response when responseHeaders throws', () => {
+      const loggerErrorSpy = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      try {
+        const { filter, mockHost, mockHttpAdapter } = createMocks({
+          responseHeaders: () => {
+            throw new Error('header sink exploded');
+          },
+        });
+        filter.catch(new NotFoundException('gone'), mockHost);
+        expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          404,
+        );
+        expect(loggerErrorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('responseHeaders threw'),
+          expect.any(String),
+        );
+      } finally {
+        loggerErrorSpy.mockRestore();
+      }
+    });
+
+    it('does not set headers when the response is already committed', () => {
+      const { filter, mockHost, mockHttpAdapter } = createMocks({
+        responseHeaders: () => ({ 'Retry-After': '60' }),
+      });
+      mockHttpAdapter.isHeadersSent.mockReturnValue(true);
+      filter.catch(new NotFoundException('gone'), mockHost);
+      expect(mockHttpAdapter.setHeader).not.toHaveBeenCalled();
+      expect(mockHttpAdapter.end).toHaveBeenCalled();
+    });
+  });
+
+  describe('unhandled exception observability: instance correlation', () => {
+    it('includes the generated instance in the default log line', () => {
+      const loggerErrorSpy = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      try {
+        const { filter, mockHost } = createMocks({
+          catchAllExceptions: true,
+          instanceStrategy: 'uuid',
+        });
+        filter.catch(new TypeError('correlate me'), mockHost);
+        const [message] = loggerErrorSpy.mock.calls[0];
+        expect(message).toMatch(
+          /^Unhandled non-HTTP exception: correlate me \[instance: urn:uuid:/,
+        );
+      } finally {
+        loggerErrorSpy.mockRestore();
+      }
+    });
+
+    it('includes the instance for non-Error thrown values too', () => {
+      const loggerErrorSpy = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      try {
+        const { filter, mockHost } = createMocks({
+          catchAllExceptions: true,
+          instanceStrategy: 'uuid',
+        });
+        filter.catch('a string', mockHost);
+        const [message] = loggerErrorSpy.mock.calls[0];
+        expect(message).toContain('[instance: urn:uuid:');
+      } finally {
+        loggerErrorSpy.mockRestore();
+      }
+    });
   });
 });

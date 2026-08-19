@@ -44,6 +44,15 @@ export interface ApplyProblemDetailResponsesOptions {
  * SwaggerModule.setup calls) idempotent. Per status, the first call's options
  * win. WeakMap-keyed by the controller constructor so reloaded module graphs
  * with fresh classes are documented anew while stale classes can be collected.
+ *
+ * Deliberately keyed by class rather than by application, even though two Nest
+ * apps in one process can share controller classes. `@ApiResponse` stores its
+ * metadata *on the class*, which both apps then read, so per-application
+ * options are not representable: applying twice does not give each app its own
+ * view, it appends a second response object to the shared class and
+ * @nestjs/swagger merges the two into one entry with a doubled description
+ * ("Bad Request\n\nBad Request"). First-wins is therefore the only coherent
+ * policy — see the caveat in the JSDoc of applyProblemDetailResponses.
  */
 const appliedStatuses = new WeakMap<object, Set<number>>();
 
@@ -55,10 +64,23 @@ const appliedStatuses = new WeakMap<object, Set<number>>();
  * All statuses use the base `ProblemDetailDto` by default. To document Tier 2
  * structured validation errors, pass `validationStatuses: [400]`.
  *
- * Idempotent per controller and status: it is safe to call this more than once
- * (lazy document factories invoked repeatedly, hot reload, multiple
+ * Idempotent per controller class and status: it is safe to call this more than
+ * once (lazy document factories invoked repeatedly, hot reload, multiple
  * `SwaggerModule.setup()` calls) — for a given controller and status, only the
  * first call's options are applied.
+ *
+ * Granularity is per controller, not per route: every route on a documented
+ * controller receives every configured status. Use the `filter` option to skip
+ * controllers this is wrong for, and per-route `@ApiResponse()` decorators for
+ * finer control.
+ *
+ * **Caveat — two applications sharing a controller class in one process** (an
+ * e2e suite, a monorepo harness): the first call wins for that class, and a
+ * later call with different `validationStatuses` is ignored. This is a
+ * constraint of `@nestjs/swagger`, not a cache policy choice — `@ApiResponse`
+ * writes its metadata onto the class itself, so both applications necessarily
+ * read the same annotations. Give each application its own controller classes
+ * if they must be documented differently.
  *
  * Call this inside the lazy document factory passed to `SwaggerModule.setup()`
  * so that decorators are attached before the OpenAPI spec is generated:
