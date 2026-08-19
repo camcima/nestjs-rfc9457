@@ -74,10 +74,12 @@ Extension members (arbitrary key-value pairs) are allowed for problem-type-speci
 - Automatic `ValidationPipe` integration — flat string-array errors work out of the box (Tier 1)
 - Enhanced structured validation errors with `property`, `constraints`, and nested `children` (Tier 2)
 - `@ProblemType()` class decorator for custom exception types with full prototype-chain inheritance
+- `ProblemDetailException` for one-off problems carrying extension members and status-specific response headers
 - Configurable `type` URI generation with `typeBaseUri` and automatic kebab-case slug derivation
 - Four `instance` strategies: `'request-uri'`, `'uuid'`, `'none'`, or a custom callback
 - Optional catch-all mode for non-`HttpException` throwables (produces 500 Problem Details)
 - Custom `exceptionMapper` callback for full control over any exception
+- `responseHeaders` callback for status companions such as `Retry-After` and `WWW-Authenticate`
 - Default `error`-level logging of unhandled exceptions when `catchAllExceptions: true` (override via `onUnhandled` callback)
 - `ProblemDetailsFactory` is injectable — use it directly in GraphQL, microservices, or custom filters
 - Optional `@nestjs/swagger` integration: `ProblemDetailDto` and `ValidationProblemDetailDto` for OpenAPI documentation, plus a `applyProblemDetailResponses()` helper that auto-applies `@ApiResponse` decorators to all controllers under `application/problem+json`
@@ -207,6 +209,9 @@ Rfc9457Module.forRoot({
   validationExceptionMapper: (messages, request) => {
     /* ... */
   },
+  responseHeaders: (problem, exception, request) => {
+    /* ... */
+  },
 });
 ```
 
@@ -264,6 +269,12 @@ parameters (which often carry tokens or PII) are never echoed into the response
 body. If you need the full URL including the query string, use a custom callback
 that returns `request.url`.
 
+Express's `originalUrl` is preferred when present. Inside a mounted router
+Express rewrites `req.url` relative to the mount point, so a handler mounted at
+`/api` would otherwise report `instance: "/users/42"` for a request the client
+sent to `/api/users/42`. Fastify does not define `originalUrl` and its `url` is
+already the full path, so nothing changes there.
+
 **`'uuid'`** — generates a `urn:uuid:<v4>` per occurrence:
 
 ```typescript
@@ -289,6 +300,7 @@ The `request` parameter implements `Rfc9457Request`:
 interface Rfc9457Request {
   url: string;
   method: string;
+  originalUrl?: string;
 }
 ```
 
@@ -353,29 +365,67 @@ If the returned `ProblemDetail` omits `status`, the factory falls back to `excep
 
 ### Status invariants
 
-RFC 9457 problem responses are error responses, so a `status` supplied by `exceptionMapper` or by `@ProblemType()` metadata must fall in the 400–599 range. A supplied value outside it (e.g. `200` or `304`) is ignored — the library logs a warning and falls back to `exception.getStatus()` (for an `HttpException`) or `500` — rather than honor a status that contradicts an error-shaped body. Note that this check applies only to statuses supplied through those problem-details channels: the `HttpException`'s own status is used as-is, per NestJS framework semantics, so an exception constructed with a non-error status (e.g. `new HttpException('x', 200)`) still emits that status.
+RFC 9457 problem responses are error responses, so **every problem response this library emits carries a 400–599 status**. Two rules enforce that:
+
+1. A `status` supplied by `exceptionMapper`, `@ProblemType()` metadata, or `ProblemDetailException` must be an integer in 400–599. A value outside the range is ignored — the library logs a warning and falls back to `exception.getStatus()` (for an `HttpException`) or `500`.
+2. An `HttpException` whose own status is outside 400–599 (e.g. `new HttpException('moved', 302)`) is **not** rendered as a problem document at all. The filter hands it back to NestJS, which sends its standard response at the requested status. A 3xx carrying `application/problem+json` would be non-conformant, and silently rewriting a deliberate redirect into a 500 would be worse.
+
+An `exceptionMapper` still takes precedence: if it claims such an exception and returns a valid error status, that problem response is sent normally.
+
+If you call `ProblemDetailsFactory` directly, rule 2 does not apply — the factory must return something, so a non-error status is clamped to `500` and a warning is logged. Prefer letting the filter make the delegation decision.
 
 ### `onUnhandled`
 
-**Type**: `(exception: unknown, request: Rfc9457Request) => void` | **Default**: built-in `Logger.error(...)` (context `Rfc9457ExceptionFilter`)
+**Type**: `(exception: unknown, request: Rfc9457Request, problem: ProblemDetail) => void` | **Default**: built-in `Logger.error(...)` (context `Rfc9457ExceptionFilter`)
 
 Called when a non-`HttpException` reaches the catch-all branch (i.e. `catchAllExceptions: true` AND the `exceptionMapper` returned `null`). Use this to send unhandled exceptions to a structured sink (Sentry, Datadog, a custom pino child logger) or to suppress the default log entirely.
 
 ```typescript
 Rfc9457Module.forRoot({
   catchAllExceptions: true,
-  onUnhandled: (exception, request) => {
+  instanceStrategy: 'uuid',
+  onUnhandled: (exception, request, problem) => {
     // Route to Sentry, Datadog, etc.
     sentry.captureException(exception, {
       tags: { method: request.method, url: request.url },
+      // `problem.instance` is the identifier the client sees. Recording it
+      // here is what lets a support ticket quoting that URN be traced back
+      // to this stack trace.
+      extra: { instance: problem.instance },
     });
   },
 });
 ```
 
+The third parameter is the fully resolved problem body that is about to be sent. Treat it as read-only: the response is serialized from the same object as soon as the callback returns, so mutating it changes what the client receives, which is not what this hook is for.
+
 **The filter still sends the generic 500 Problem Details response after invoking `onUnhandled`.** This callback exists purely for observability — it never changes the HTTP response.
 
-When `onUnhandled` is **not** provided, the library calls `Logger.error(...)` with either the exception's `stack` string or a `{ exception }` structured context (for non-`Error` values). The log context is `Rfc9457ExceptionFilter` so it can be filtered or silenced via NestJS's logger configuration.
+When `onUnhandled` is **not** provided, the library calls `Logger.error(...)` with either the exception's `stack` string or a `{ exception }` structured context (for non-`Error` values). When an `instance` was generated for the occurrence, it is appended to the log message (`… [instance: urn:uuid:…]`) so the default logging is correlatable too. The log context is `Rfc9457ExceptionFilter` so it can be filtered or silenced via NestJS's logger configuration.
+
+### `responseHeaders`
+
+**Type**: `(problem: ProblemDetail, exception: unknown, request: Rfc9457Request) => Record<string, string> | undefined` | **Default**: `undefined`
+
+Supplies transport response headers that accompany a problem response. Some statuses are only fully specified by a header: `Retry-After` on 429 and 503, `WWW-Authenticate` on 401. Those belong in the header block, not the body, and this is the channel for them.
+
+```typescript
+Rfc9457Module.forRoot({
+  responseHeaders: (problem) => {
+    if (problem.status === 401) return { 'WWW-Authenticate': 'Bearer realm="api"' };
+    if (problem.status === 429 && typeof problem.retryAfterSeconds === 'number') {
+      return { 'Retry-After': String(problem.retryAfterSeconds) };
+    }
+    return undefined;
+  },
+});
+```
+
+Called once per problem response with the resolved body, the originating exception, and the request. Return `undefined` to add nothing.
+
+`Content-Type` is reserved: it is written after these headers and always ends up `application/problem+json`. A throw inside the callback is contained like every other callback — it is logged and the response goes out without the extra headers.
+
+For a header that belongs to one specific occurrence rather than to a global policy, pass it at the throw site instead — see [`ProblemDetailException`](#problemdetailexception-one-off-problems-with-extension-members). Throw-site headers are applied first, and this callback is merged over them, so a global policy can override a throw-site value.
 
 ### `validationStatuses`
 
@@ -595,7 +645,64 @@ export class CardDeclinedException extends PaymentException {
 }
 ```
 
-`@ProblemType()` can also decorate plain `Error` subclasses (not extending `HttpException`), but these are only handled by the factory when `catchAllExceptions: true` is set.
+`@ProblemType()` can also decorate plain `Error` subclasses (not extending `HttpException`), but these are only handled by the factory when `catchAllExceptions: true` is set. Because that combination silently produces NestJS's default error body instead of your problem type, the filter logs a warning (once per exception class) naming the class and how to fix it, rather than leaving you to wonder why the decorator had no effect.
+
+### `ProblemDetailException`: one-off problems with extension members
+
+`@ProblemType()` describes a **reusable problem type**. When you need a **one-off problem** — particularly one carrying occurrence-specific extension members — throw a `ProblemDetailException` instead. It takes a complete problem document and passes every member through to the response body:
+
+```typescript
+import { ProblemDetailException } from '@camcima/nestjs-rfc9457';
+
+throw new ProblemDetailException({
+  type: 'https://api.example.com/problems/insufficient-funds',
+  title: 'Insufficient Funds',
+  status: 402,
+  detail: 'Your balance is too low to cover this transfer.',
+  balance: 30,
+  cost: 50,
+});
+```
+
+```json
+{
+  "type": "https://api.example.com/problems/insufficient-funds",
+  "title": "Insufficient Funds",
+  "status": 402,
+  "detail": "Your balance is too low to cover this transfer.",
+  "balance": 30,
+  "cost": 50
+}
+```
+
+`status` is required and must be an error status (400–599); anything else throws a `RangeError` at construction. Normalization still applies: a bare `type` slug is expanded against `typeBaseUri`, a missing `title` is filled from the status phrase, and the configured instance strategy runs.
+
+**Why this exists.** A plain `HttpException` cannot carry extension members. Given `new HttpException({ message: 'Balance too low', balance: 30 }, 402)`, NestJS's response object is read for its `message` only — `balance` is dropped. Since extension members are the whole point of RFC 9457's extensibility, this class is the supported way to emit them from a throw site.
+
+**Combined with `@ProblemType()`.** Decorate a subclass to declare the reusable identity once, then supply per-occurrence data at each throw. Instance members win per-member:
+
+```typescript
+@ProblemType({
+  type: 'https://api.example.com/problems/payment-error',
+  title: 'Payment Error',
+  status: 402,
+})
+export class PaymentProblem extends ProblemDetailException {}
+
+throw new PaymentProblem({ status: 409, detail: 'Already settled', settledAt });
+// type and title come from the decorator; status, detail and settledAt from the throw
+```
+
+**Response headers.** Pass headers for this occurrence as the second argument:
+
+```typescript
+throw new ProblemDetailException(
+  { status: 429, title: 'Too Many Requests', retryAfterSeconds: 60 },
+  { headers: { 'Retry-After': '60' } },
+);
+```
+
+Precedence is unchanged: a global [`exceptionMapper`](#exceptionmapper) that claims the exception still wins, and [`suppress5xxDetail`](#suppress5xxdetail) still strips `detail` from a 5xx (extension members are left alone).
 
 ---
 
@@ -753,6 +860,22 @@ By default, this documents `400` and `500` responses on every route using `Probl
 
 **Idempotent by design.** `applyProblemDetailResponses` is safe to call more than once. For a given controller and status, only the first call's options are applied — later calls for that same pair are no-ops. This means lazy document factories that run repeatedly (hot reload, multiple `SwaggerModule.setup()` calls for separate specs, etc.) never duplicate `@ApiResponse` metadata, and you don't need to guard the call site with your own "already applied" bookkeeping.
 
+> **Calling it more than once.** Safe: for a given controller class and status,
+> the first call's options are applied and later calls are ignored, so lazy
+> document factories, hot reload, and multiple `SwaggerModule.setup()` calls do
+> not duplicate metadata.
+>
+> One consequence is worth knowing if you run **two applications in one
+> process** (an e2e suite, a monorepo harness) that **share controller
+> classes**: the first application to be documented decides the options for that
+> class, and a later call with different `validationStatuses` is ignored. This
+> is a constraint of `@nestjs/swagger` rather than a caching choice —
+> `@ApiResponse` stores its metadata on the class itself, so both applications
+> necessarily read the same annotations. Applying per application would not give
+> each its own view; it would append a second response object that
+> `@nestjs/swagger` merges into one entry with a doubled description. Give each
+> application its own controller classes if they must be documented differently.
+
 ### Options
 
 `applyProblemDetailResponses` accepts an optional second argument:
@@ -908,14 +1031,17 @@ The factory applies the full resolution chain (mapper → decorator → validati
 You can build your own filter on top of `ProblemDetailsFactory` if you need to intercept specific exception types before the global filter sees them:
 
 ```typescript
-import { Catch, ArgumentsHost, HttpException } from '@nestjs/common';
-import { BaseExceptionFilter } from '@nestjs/core';
-import { ProblemDetailsFactory } from '@camcima/nestjs-rfc9457';
+import { Catch, ArgumentsHost } from '@nestjs/common';
+import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
+import { ProblemDetailsFactory, PROBLEM_CONTENT_TYPE } from '@camcima/nestjs-rfc9457';
 
 @Catch(MySpecialException)
 export class MySpecialExceptionFilter extends BaseExceptionFilter {
-  constructor(private readonly factory: ProblemDetailsFactory) {
-    super();
+  constructor(
+    private readonly factory: ProblemDetailsFactory,
+    private readonly adapterHost: HttpAdapterHost,
+  ) {
+    super(adapterHost.httpAdapter);
   }
 
   catch(exception: MySpecialException, host: ArgumentsHost) {
@@ -924,10 +1050,22 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
     const response = ctx.getResponse();
 
     const { status, body } = this.factory.create(exception, request);
-    response.status(status).json(body);
+
+    // Write through the HTTP adapter so the filter works on Express and
+    // Fastify alike, and set the RFC 9457 media type explicitly — the
+    // adapter's default is application/json, which would make the response
+    // non-conformant even though the body is correct.
+    const httpAdapter = this.adapterHost.httpAdapter;
+    httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
+    httpAdapter.reply(response, body, status);
   }
 }
 ```
+
+> `Content-Type: application/problem+json` is what tells a client the body is a
+> problem document. If you write the response yourself with `res.json(...)` you
+> get `application/json` and lose that signal — always set the header, whichever
+> mechanism you use.
 
 ---
 
@@ -939,6 +1077,9 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
 | `ProblemDetailsFactory`                        | Injectable class | Core resolver; injectable for use outside the HTTP filter                   |
 | `Rfc9457ExceptionFilter`                       | Injectable class | Global exception filter; registered automatically by the module             |
 | `ProblemType`                                  | Decorator        | Class decorator that attaches problem type metadata to exception classes    |
+| `ProblemDetailException`                       | Class            | Throw a complete problem document, extension members and headers included   |
+| `ProblemDetailExceptionOptions`                | Interface        | Options for `ProblemDetailException` (`headers`)                            |
+| `ProblemDetailWithStatus`                      | Type             | `ProblemDetail` with a required `status` — the `ProblemDetailException` arg |
 | `ProblemDetail`                                | Interface        | RFC 9457 response body shape with index signature for extension members     |
 | `ProblemTypeMetadata`                          | Interface        | Decorator options (`type`, `title`, `status`)                               |
 | `Rfc9457ModuleOptions`                         | Interface        | Options accepted by `forRoot()`                                             |
@@ -1084,6 +1225,8 @@ See the [nestjs-rfc9457-examples](https://github.com/camcima/nestjs-rfc9457-exam
 
 ## Security
 
+Vulnerability reports go through [GitHub Security Advisories](https://github.com/camcima/nestjs-rfc9457/security/advisories/new); see [SECURITY.md](SECURITY.md) for scope and what to include.
+
 ### CI
 
 | Tool            | Purpose                                                  | Trigger                   |
@@ -1142,7 +1285,9 @@ pnpm run test:cov
 pnpm run build
 ```
 
-This project uses [Conventional Commits](https://www.conventionalcommits.org/) enforced by commitlint, and [Lefthook](https://github.com/evilmartians/lefthook) for pre-commit hooks (lint + format on staged files).
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) enforced by commitlint, and [Lefthook](https://github.com/evilmartians/lefthook) for pre-commit hooks (lint + format on staged files) plus a pre-push gitleaks scan of the commits being pushed.
+
+User-facing changes need an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in the same pull request as the change.
 
 ---
 
