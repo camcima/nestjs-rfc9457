@@ -8,6 +8,32 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: 'chore(deps):'
+    # Dependabot places a dependency in the FIRST group whose patterns match,
+    # so order matters here: the catch-all must stay last. Anything matching no
+    # group still gets its own PR, which is what keeps majors reviewable.
+    groups:
+      # The Nest packages resolve against each other's minor line: core 11.2.x
+      # imports modules that only exist in common 11.2.x. Bumping one without
+      # the others fails the build outright (#134 died on "Cannot find module
+      # '@nestjs/common/decorators/http/sse-signal.decorator'"), so they have
+      # to move as a unit. No update-types filter, deliberately: a future
+      # 11 -> 12 major has to move all of them together too.
+      nestjs:
+        patterns:
+          - '@nestjs/*'
+      # This package ships no runtime dependencies at all — the consumer
+      # contract is peerDependencies, and everything in devDependencies is
+      # build/test tooling. Minor and patch bumps there carry little risk and
+      # are worth batching into one weekly PR rather than a dozen.
+      dev-dependencies:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+      # Majors are intentionally left ungrouped so each lands in its own PR
+      # with its own changelog to read: release-it 21, for instance, raised its
+      # node floor to ^22.21 and switched to strict CLI argument parsing.
 
   - package-ecosystem: github-actions
     directory: /
@@ -16,3 +42,22 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: 'ci(deps):'
+    groups:
+      # init, autobuild and analyze are pinned to a single SHA and CodeQL
+      # refuses to run when they disagree ("Loaded a configuration file for
+      # version '4.37.1', but running version '4.37.8'"). Split across three
+      # PRs (#130, #138, #142) none of them could ever go green on its own.
+      # All update types, including majors: the constraint is that the three
+      # SHAs match, which has nothing to do with how far the version moved.
+      codeql:
+        patterns:
+          - 'github/codeql-action*'
+      # Remaining actions are SHA-pinned and exercised by CI on every PR, so
+      # minor and patch bumps batch safely. Majors fall through to their own
+      # PR — an action major can change inputs or runtime.
+      actions:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
