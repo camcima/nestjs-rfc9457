@@ -11,5 +11,5 @@ coverage/
 .DS_Store
 .claude
 .codex
-docs/superpowers/
+docs/
 skills/*-workspace/
