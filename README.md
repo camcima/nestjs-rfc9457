@@ -104,13 +104,13 @@ pnpm add @camcima/nestjs-rfc9457
 
 ### Peer dependencies
 
-| Package            | Version                           | Required                               |
-| ------------------ | --------------------------------- | -------------------------------------- |
-| `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
-| `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
-| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`             | Yes                                    |
-| `class-validator`  | `^0.14.0 \|\| ^0.15.0`            | No (optional, for Tier 2 validation)   |
-| `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0` | No (optional, for OpenAPI integration) |
+| Package            | Version                                        | Required                               |
+| ------------------ | ---------------------------------------------- | -------------------------------------- |
+| `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0 \|\| ^12.0.0`            | Yes                                    |
+| `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0 \|\| ^12.0.0`            | Yes                                    |
+| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`                          | Yes                                    |
+| `class-validator`  | `^0.14.0 \|\| ^0.15.0`                         | No (optional, for Tier 2 validation)   |
+| `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0 \|\| ^12.0.0` | No (optional, for OpenAPI integration) |
 
 > **Note:** `reflect-metadata` must be imported once at your application's entry point. NestJS's standard bootstrap already does this, so no extra setup is needed in a typical app — the library relies on it for `@ProblemType()` decorator metadata.
 
