@@ -68,6 +68,20 @@ export class AppController {
     );
   }
 
+  @Get('status-code-extension')
+  statusCodeExtension(): never {
+    // A mapper spreading Nest's own error response produces exactly this shape.
+    throw new ProblemDetailException({ status: 400, statusCode: 400 });
+  }
+
+  @Get('bad-header')
+  badHeader(): never {
+    throw new ProblemDetailException(
+      { status: 400, title: 'Bad Request' },
+      { headers: { 'X-Trace': 'bad\nvalue', 'Retry-After': '60' } },
+    );
+  }
+
   @Get('redirect-ish')
   redirectIsh(): never {
     // A non-error HttpException: RFC 9457 does not cover 3xx, so the filter

@@ -2,6 +2,9 @@ import { Controller, Get, Module } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Test } from '@nestjs/testing';
+import { validateSync } from 'class-validator';
+import { ProblemDetailsFactory } from '../../../src/problem-details.factory';
+import { Rfc9457ValidationException } from '../../../src/validation/rfc9457-validation.exception';
 import {
   ProblemDetailDto,
   ValidationErrorDto,
@@ -69,9 +72,9 @@ describe('ValidationErrorDto', () => {
     expect(schema.properties.children).toBeDefined();
     expect(schema.properties.children.items.$ref).toContain('ValidationErrorDto');
 
-    expect(schema.required).toContain('property');
-    expect(schema.required).not.toContain('constraints');
-    expect(schema.required).not.toContain('children');
+    // Every member is optional: the factory emits entries without `property`
+    // (e.g. class-validator's forbidUnknownValues error).
+    expect(schema.required ?? []).toEqual([]);
 
     await app.close();
   });
@@ -102,5 +105,37 @@ describe('ValidationProblemDetailDto', () => {
     expect(hasErrors).toBeTruthy();
 
     await app.close();
+  });
+});
+
+describe('ValidationErrorDto against runtime output', () => {
+  it('accepts the entry class-validator produces for forbidUnknownValues', async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [StubModule] }).compile();
+    const app = moduleRef.createNestApplication();
+    await app.init();
+    const document = SwaggerModule.createDocument(app, new DocumentBuilder().build(), {
+      extraModels: [ValidationErrorDto],
+    });
+    const schema = document.components?.schemas?.['ValidationErrorDto'] as any;
+    await app.close();
+
+    // A class with no validation metadata triggers the unknown-value error,
+    // which carries constraints but no property name.
+    class Undecorated {}
+    const errors = validateSync(new Undecorated(), { forbidUnknownValues: true });
+    expect(errors).toHaveLength(1);
+
+    const { body } = new ProblemDetailsFactory({}).create(new Rfc9457ValidationException(errors), {
+      url: '/x',
+      method: 'POST',
+    });
+    const entries = body.errors as Record<string, unknown>[];
+    expect(entries).toEqual([{ constraints: { unknownValue: expect.any(String) } }]);
+
+    for (const entry of entries) {
+      for (const member of schema.required ?? []) {
+        expect(entry).toHaveProperty(member);
+      }
+    }
   });
 });
