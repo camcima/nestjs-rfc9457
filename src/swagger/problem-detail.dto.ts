@@ -43,11 +43,13 @@ export class ProblemDetailDto {
  * Matches the shape produced by `ProblemDetailsFactory.flattenValidationError()`.
  */
 export class ValidationErrorDto {
-  @ApiProperty({
-    description: 'The property that failed validation.',
+  @ApiPropertyOptional({
+    description:
+      'The property that failed validation. Absent for object-level errors such as ' +
+      "class-validator's `forbidUnknownValues` failure.",
     example: 'email',
   })
-  property!: string;
+  property?: string;
 
   @ApiPropertyOptional({
     description: 'Constraint name → error message map.',

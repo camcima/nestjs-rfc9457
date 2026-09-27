@@ -106,21 +106,27 @@ export interface Rfc9457ModuleOptions {
    * The third parameter carries the fully resolved problem body that is about
    * to be sent, so the `instance` identifier generated for this occurrence
    * (e.g. under `instanceStrategy: 'uuid'`) can be recorded alongside the
-   * stack trace and correlated with the client's copy. Mutating it has no
-   * effect — the response is serialized from the same object immediately
-   * after this callback returns, so treat it as read-only.
+   * stack trace and correlated with the client's copy. It is typed
+   * `Readonly` because it is the same object the response is serialized
+   * from: a mutation (including one hidden behind a cast, or to a nested
+   * extension value) changes what the client receives.
    *
    * The filter **still** sends the problem-details response after invoking
    * this callback — it exists purely for observability.
    */
-  onUnhandled?: (exception: unknown, request: Rfc9457Request, problem: ProblemDetail) => void;
+  onUnhandled?: (
+    exception: unknown,
+    request: Rfc9457Request,
+    problem: Readonly<ProblemDetail>,
+  ) => void;
   /**
    * Supplies transport response headers that accompany a problem response —
    * `Retry-After` on 429/503, `WWW-Authenticate` on 401, and similar status
    * companions that belong in the header block rather than the body.
    *
-   * Called once per problem response with the fully resolved body, the
-   * originating exception, and the request. Return `undefined` (or an empty
+   * Called once per problem response with the fully resolved body (typed
+   * `Readonly` for the same reason as in `onUnhandled`), the originating
+   * exception, and the request. Return `undefined` (or an empty
    * object) to add nothing. Header names are passed to the HTTP adapter
    * verbatim. `Content-Type` is reserved by the library and cannot be
    * overridden here.
@@ -130,10 +136,12 @@ export interface Rfc9457ModuleOptions {
    * can override a throw-site value.
    *
    * Like every other callback, a throw here is contained: it is logged and
-   * the response is sent without the extra headers.
+   * the response is sent without the extra headers. An entry with an invalid
+   * name or value (per Node's header validation, e.g. a value containing a
+   * newline) is dropped and logged by name; the rest are still sent.
    */
   responseHeaders?: (
-    problem: ProblemDetail,
+    problem: Readonly<ProblemDetail>,
     exception: unknown,
     request: Rfc9457Request,
   ) => Record<string, string> | undefined;

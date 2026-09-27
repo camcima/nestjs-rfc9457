@@ -13,12 +13,20 @@ function createMocks(options: Rfc9457ModuleOptions = {}) {
 
   const mockHttpAdapter = {
     setHeader: vi.fn(),
+    // Records the document the client receives: the filter hands the adapter
+    // a pre-serialized string, which is decoded here so assertions can match
+    // on members. `rawReply` records the call exactly as the adapter saw it.
     reply: vi.fn(),
     isHeadersSent: vi.fn().mockReturnValue(false),
     end: vi.fn(),
   };
+  const rawReply = vi.fn((res: unknown, body: unknown, status: number) =>
+    mockHttpAdapter.reply(res, typeof body === 'string' ? JSON.parse(body) : body, status),
+  );
 
-  const adapterHost = { httpAdapter: mockHttpAdapter } as unknown as HttpAdapterHost;
+  const adapterHost = {
+    httpAdapter: { ...mockHttpAdapter, reply: rawReply },
+  } as unknown as HttpAdapterHost;
   const factory = new ProblemDetailsFactory(options);
   const filter = new Rfc9457ExceptionFilter(factory, options, adapterHost);
 
@@ -30,7 +38,7 @@ function createMocks(options: Rfc9457ModuleOptions = {}) {
     }),
   } as unknown as ArgumentsHost;
 
-  return { filter, mockHost, mockHttpAdapter, mockResponse, mockRequest };
+  return { filter, mockHost, mockHttpAdapter, rawReply, mockResponse, mockRequest };
 }
 
 describe('Rfc9457ExceptionFilter', () => {
@@ -52,6 +60,20 @@ describe('Rfc9457ExceptionFilter', () => {
       }),
       404,
     );
+  });
+
+  it('serializes the body itself so a statusCode extension cannot change the media type', () => {
+    // Nest's adapters reset Content-Type to application/json when an object
+    // body has statusCode >= 400; a string body is sent as-is.
+    const { filter, mockHost, rawReply, mockResponse } = createMocks();
+    filter.catch(new ProblemDetailException({ status: 400, statusCode: 400 }), mockHost);
+    expect(rawReply).toHaveBeenCalledWith(mockResponse, expect.any(String), 400);
+    expect(JSON.parse(rawReply.mock.calls[0][1] as string)).toEqual({
+      type: 'about:blank',
+      title: 'Bad Request',
+      status: 400,
+      statusCode: 400,
+    });
   });
 
   it('delegates to super.catch() for non-HttpException when catchAllExceptions is false and no mapper', () => {
@@ -635,6 +657,81 @@ describe('committed response guard', () => {
         exception,
         mockRequest,
       );
+    });
+
+    describe('invalid header entries', () => {
+      let loggerErrorSpy: MockInstance;
+
+      beforeEach(() => {
+        loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      });
+
+      afterEach(() => {
+        loggerErrorSpy.mockRestore();
+      });
+
+      function headerNames(setHeader: MockInstance): unknown[] {
+        return setHeader.mock.calls.map((call: unknown[]) => call[1]);
+      }
+
+      it('skips a throw-site header whose value contains a newline, keeping the rest', () => {
+        const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks();
+        filter.catch(
+          new ProblemDetailException(
+            { status: 400 },
+            { headers: { 'X-Trace': 'bad\nvalue', 'Retry-After': '60' } },
+          ),
+          mockHost,
+        );
+        expect(headerNames(mockHttpAdapter.setHeader)).not.toContain('X-Trace');
+        expect(mockHttpAdapter.setHeader).toHaveBeenCalledWith(mockResponse, 'Retry-After', '60');
+        expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          400,
+        );
+        expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining('"X-Trace"'));
+      });
+
+      it('skips a responseHeaders entry with an invalid name', () => {
+        const { filter, mockHost, mockHttpAdapter } = createMocks({
+          responseHeaders: () => ({ 'Bad Name': 'x' }),
+        });
+        filter.catch(new NotFoundException('gone'), mockHost);
+        expect(headerNames(mockHttpAdapter.setHeader)).toEqual(['Content-Type']);
+        expect(mockHttpAdapter.reply).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          404,
+        );
+        expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining('"Bad Name"'));
+      });
+
+      it('skips an undefined value supplied from untyped code', () => {
+        const { filter, mockHost, mockHttpAdapter } = createMocks({
+          responseHeaders: () => ({ 'X-Missing': undefined }) as unknown as Record<string, string>,
+        });
+        filter.catch(new NotFoundException('gone'), mockHost);
+        expect(headerNames(mockHttpAdapter.setHeader)).toEqual(['Content-Type']);
+        expect(mockHttpAdapter.reply).toHaveBeenCalled();
+      });
+
+      it('still sends a numeric value supplied from untyped code', () => {
+        const { filter, mockHost, mockHttpAdapter, mockResponse } = createMocks({
+          responseHeaders: () => ({ 'Retry-After': 60 }) as unknown as Record<string, string>,
+        });
+        filter.catch(new NotFoundException('gone'), mockHost);
+        expect(mockHttpAdapter.setHeader).toHaveBeenCalledWith(mockResponse, 'Retry-After', 60);
+      });
+
+      it('does not log the rejected header value', () => {
+        const { filter, mockHost } = createMocks({
+          responseHeaders: () => ({ 'X-Token': 'secret\r\nvalue' }),
+        });
+        filter.catch(new NotFoundException('gone'), mockHost);
+        const logged = JSON.stringify(loggerErrorSpy.mock.calls);
+        expect(logged).not.toContain('secret');
+      });
     });
 
     it('lets responseHeaders override a throw-site header', () => {

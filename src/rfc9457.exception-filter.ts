@@ -1,4 +1,5 @@
 import { ArgumentsHost, Catch, HttpException, Inject, Logger } from '@nestjs/common';
+import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import { ProblemDetailsFactory } from './problem-details.factory';
 import {
@@ -71,9 +72,10 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
 
     // An HttpException carrying a non-error status (e.g. `new
     // HttpException('moved', 302)`) is a redirect/informational response, not a
-    // problem. RFC 9457 §3 scopes problem documents to error responses, so
-    // rendering one here would emit application/problem+json on a 3xx. Hand it
-    // back to Nest, which sends its standard body at the requested status.
+    // problem. RFC 9457 permits problem details with any status, but this
+    // library's policy is to emit them only for 4xx and 5xx, where they fit
+    // most naturally (RFC 9457 §1). Hand it back to Nest, which sends its
+    // standard body at the requested status.
     // Note this runs after the mapper: a mapper that deliberately claims such
     // an exception still wins.
     if (isHttpException && !this.isErrorStatus(exception.getStatus())) {
@@ -112,7 +114,7 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     this.sendProblem(response, body, status, exception, request);
   }
 
-  /** A problem document is an error response (RFC 9457): 400-599 only. */
+  /** Library policy: problem documents are emitted for 400-599 only. */
   private isErrorStatus(status: number): boolean {
     return Number.isInteger(status) && status >= 400 && status <= 599;
   }
@@ -245,13 +247,40 @@ export class Rfc9457ExceptionFilter extends BaseExceptionFilter {
     const headers = this.resolveHeaders(body, exception, request);
     if (headers) {
       for (const [name, value] of Object.entries(headers)) {
-        httpAdapter.setHeader(response, name, value);
+        if (this.isValidHeader(name, value)) {
+          httpAdapter.setHeader(response, name, value);
+        }
       }
     }
     // Set last so Content-Type stays reserved: RFC 9457 requires
     // application/problem+json, and a stray header entry must not displace it.
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
-    httpAdapter.reply(response, body, status);
+    // Serialize here rather than handing the adapter an object: both Nest
+    // adapters reset Content-Type to application/json when an object body has
+    // `statusCode >= 400`, which a legitimate extension member (or a mapper
+    // spreading Nest's own error response) can trigger. A string is sent as-is.
+    httpAdapter.reply(response, JSON.stringify(body), status);
+  }
+
+  /**
+   * Checks a header entry against Node's own rules before it reaches the
+   * adapter. An invalid name or value (e.g. one containing a newline) would
+   * otherwise throw inside the adapter — on Express while setting it, on
+   * Fastify while writing the response — and replace the problem with a
+   * framework 500. The entry is dropped and logged by name only: the value
+   * may carry a credential.
+   */
+  private isValidHeader(name: string, value: string): boolean {
+    try {
+      validateHeaderName(name);
+      validateHeaderValue(name, value);
+      return true;
+    } catch {
+      this.logger.error(
+        `Dropping invalid response header ${JSON.stringify(name)}; sending the problem response without it`,
+      );
+      return false;
+    }
   }
 
   private logOriginal(exception: unknown, problem?: ProblemDetail): void {

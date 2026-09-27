@@ -803,6 +803,99 @@ describe('ProblemDetailsFactory', () => {
     });
   });
 
+  describe('adapter-generated HTTP errors (http-errors and Fastify)', () => {
+    // Mirrors what the `http-errors` package builds for Express's body parser:
+    // an Error carrying `status`, `statusCode`, and a boolean `expose` flag that
+    // says whether the message is safe to show the client.
+    function httpError(statusCode: number, message: string, expose = statusCode < 500) {
+      return Object.assign(new Error(message), {
+        status: statusCode,
+        statusCode,
+        expose,
+        type: 'entity.too.large',
+      });
+    }
+
+    it('preserves the status of an http-errors 413 instead of producing a 500', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(
+        httpError(413, 'request entity too large'),
+        mockRequest,
+      );
+      expect(status).toBe(413);
+      expect(body).toEqual({
+        type: 'about:blank',
+        title: 'Payload Too Large',
+        status: 413,
+        detail: 'request entity too large',
+      });
+    });
+
+    it('omits detail when the error is not marked as exposable', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(
+        httpError(400, 'internal parser state', false),
+        mockRequest,
+      );
+      expect(status).toBe(400);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('omits detail for a 5xx http-errors error', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(
+        httpError(503, 'upstream pool exhausted'),
+        mockRequest,
+      );
+      expect(status).toBe(503);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('ignores a statusCode outside the error range', () => {
+      const factory = createFactory();
+      const { status, body } = factory.create(httpError(302, 'moved', true), mockRequest);
+      expect(status).toBe(500);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('preserves the status of a Fastify body-limit error (Fastify 4, NestJS 10)', () => {
+      // @fastify/error instances carry an FST_ code and statusCode, no `expose`.
+      const factory = createFactory();
+      const fastifyError = Object.assign(new Error('Request body is too large'), {
+        name: 'FastifyError',
+        code: 'FST_ERR_CTP_BODY_TOO_LARGE',
+        statusCode: 413,
+      });
+      const { status, body } = factory.create(fastifyError, mockRequest);
+      expect(status).toBe(413);
+      expect(body.detail).toBe('Request body is too large');
+    });
+
+    it('omits detail for a 5xx Fastify error', () => {
+      const factory = createFactory();
+      const fastifyError = Object.assign(new Error('internal plugin state'), {
+        code: 'FST_ERR_SOMETHING',
+        statusCode: 500,
+      });
+      const { status, body } = factory.create(fastifyError, mockRequest);
+      expect(status).toBe(500);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('does not treat an arbitrary error with a statusCode as an HTTP error', () => {
+      // e.g. an SDK error reporting a downstream 404: without http-errors'
+      // `expose` flag it is an internal failure, not a client error.
+      const factory = createFactory();
+      const sdkError = Object.assign(new Error('The specified key does not exist.'), {
+        statusCode: 404,
+        code: 'NoSuchKey',
+      });
+      const { status, body } = factory.create(sdkError, mockRequest);
+      expect(status).toBe(500);
+      expect(body.detail).toBeUndefined();
+    });
+  });
+
   describe('status clamping', () => {
     let loggerWarnSpy: MockInstance;
 

@@ -34,9 +34,9 @@ export class ProblemDetailsFactory {
    * Resolve an exception to a Problem Details response.
    * Always returns a result — the factory owns the fallback behavior.
    *
-   * The returned `status` is always an error status (400-599): a problem
-   * document is by definition an error response, so a non-error status
-   * reaching the factory is clamped to 500 and logged.
+   * The returned `status` is always an error status (400-599). That is
+   * library policy, not an RFC 9457 requirement (the RFC allows any status):
+   * a non-error status reaching the factory is clamped to 500 and logged.
    *
    * @param exception - The caught exception (any type)
    * @param request - The incoming request context
@@ -121,7 +121,19 @@ export class ProblemDetailsFactory {
       }
     }
 
-    // Step 6: Unknown exception fallback
+    // Step 6: Adapter-generated HTTP errors. Express's body parser (and other
+    // middleware built on `http-errors`) and Fastify itself throw errors that
+    // carry a client-error status but do not extend HttpException. NestJS's own
+    // handler preserves their status, so the catch-all path must too, or an
+    // oversized body turns into a 500. Recognition requires http-errors'
+    // boolean `expose` flag or Fastify's `FST_` error code, so an arbitrary
+    // error that merely has a `statusCode` (e.g. an SDK reporting a downstream
+    // 404) stays an internal failure.
+    if (!result) {
+      result = this.handleHttpError(exception);
+    }
+
+    // Step 7: Unknown exception fallback
     // Internal safety net: the filter is responsible for routing only appropriate
     // exceptions to the factory. If we reach here, it means no resolution step
     // matched. Produce a generic 500 regardless of catchAllExceptions — this is
@@ -170,7 +182,7 @@ export class ProblemDetailsFactory {
     return { status: httpStatus, body: result };
   }
 
-  /** A problem document is an error response (RFC 9457): 400-599 only. */
+  /** Library policy: problem documents are emitted for 400-599 only. */
   private isErrorStatus(status: unknown): status is number {
     return typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599;
   }
@@ -288,6 +300,32 @@ export class ProblemDetailsFactory {
       return exception.message || undefined;
     }
     return undefined;
+  }
+
+  private handleHttpError(exception: unknown): ProblemDetail | null {
+    if (typeof exception !== 'object' || exception === null) return null;
+    const { statusCode, expose, code, message } = exception as Record<string, unknown>;
+    if (!this.isErrorStatus(statusCode)) return null;
+
+    let exposeMessage: boolean;
+    if (typeof expose === 'boolean') {
+      // http-errors: `expose` is its own verdict on whether the message is
+      // client-safe (true for 4xx, false for 5xx by default).
+      exposeMessage = expose;
+    } else if (typeof code === 'string' && code.startsWith('FST_')) {
+      // @fastify/error (e.g. FST_ERR_CTP_BODY_TOO_LARGE, which NestJS 10 on
+      // Fastify 4 passes through unwrapped). Fastify's own handler sends 4xx
+      // messages to the client; apply the same rule.
+      exposeMessage = statusCode < 500;
+    } else {
+      return null;
+    }
+
+    const result: ProblemDetail = { status: statusCode };
+    if (exposeMessage && typeof message === 'string' && message.length > 0) {
+      result.detail = message;
+    }
+    return result;
   }
 
   private handleValidation(exception: unknown, request: Rfc9457Request): ProblemDetail | null {

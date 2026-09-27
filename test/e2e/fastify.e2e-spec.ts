@@ -67,6 +67,28 @@ describe('Fastify E2E', () => {
       expect(body.retryAfterSeconds).toBe(60);
     });
 
+    it('keeps the problem media type when the body has a statusCode extension', async () => {
+      // Nest's adapters overwrite Content-Type with application/json whenever
+      // the reply body has statusCode >= 400.
+      const { body, headers } = await request(app.getHttpServer())
+        .get('/test/status-code-extension')
+        .expect(400);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.statusCode).toBe(400);
+    });
+
+    it('drops an invalid header instead of failing the problem response', async () => {
+      const { body, headers } = await request(app.getHttpServer())
+        .get('/test/bad-header')
+        .expect(400);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(headers['x-trace']).toBeUndefined();
+      expect(headers['retry-after']).toBe('60');
+      expect(body).toEqual({ type: 'about:blank', title: 'Bad Request', status: 400 });
+    });
+
     it('delegates a non-error HttpException status to NestJS', async () => {
       const { headers } = await request(app.getHttpServer()).get('/test/redirect-ish').expect(302);
 
@@ -153,6 +175,19 @@ describe('Fastify E2E', () => {
       expect(body.title).toBe('Internal Server Error');
       expect(body.status).toBe(500);
       expect(body.detail).toBeUndefined();
+    });
+
+    it('preserves the 413 for an oversized request body', async () => {
+      // Fastify's default body limit is 1 MiB.
+      const { body, headers } = await request(app.getHttpServer())
+        .post('/test/validate-default')
+        .set('Content-Type', 'application/json')
+        .send(JSON.stringify({ padding: 'x'.repeat(2 * 1024 * 1024) }))
+        .expect(413);
+
+      expect(headers['content-type']).toMatch(/^application\/problem\+json/);
+      expect(body.status).toBe(413);
+      expect(body.title).toBe('Payload Too Large');
     });
   });
 

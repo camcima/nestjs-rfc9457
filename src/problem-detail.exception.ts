@@ -2,8 +2,9 @@ import { HttpException } from '@nestjs/common';
 import { ProblemDetail } from './rfc9457.interfaces';
 
 /**
- * A {@link ProblemDetail} whose `status` member is mandatory. RFC 9457 problem
- * documents are error responses, so the throw site must say which error.
+ * A {@link ProblemDetail} whose `status` member is mandatory. This library
+ * emits problem documents only for error statuses (400-599), so the throw site
+ * must say which error.
  */
 export type ProblemDetailWithStatus = ProblemDetail & { status: number };
 

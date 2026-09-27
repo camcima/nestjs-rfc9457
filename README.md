@@ -104,13 +104,13 @@ pnpm add @camcima/nestjs-rfc9457
 
 ### Peer dependencies
 
-| Package            | Version                           | Required                               |
-| ------------------ | --------------------------------- | -------------------------------------- |
-| `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
-| `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0`            | Yes                                    |
-| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`             | Yes                                    |
-| `class-validator`  | `^0.14.0 \|\| ^0.15.0`            | No (optional, for Tier 2 validation)   |
-| `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0` | No (optional, for OpenAPI integration) |
+| Package            | Version                                        | Required                               |
+| ------------------ | ---------------------------------------------- | -------------------------------------- |
+| `@nestjs/common`   | `^10.0.0 \|\| ^11.0.0 \|\| ^12.0.0`            | Yes                                    |
+| `@nestjs/core`     | `^10.0.0 \|\| ^11.0.0 \|\| ^12.0.0`            | Yes                                    |
+| `reflect-metadata` | `^0.1.13 \|\| ^0.2.0`                          | Yes                                    |
+| `class-validator`  | `^0.14.0 \|\| ^0.15.0`                         | No (optional, for Tier 2 validation)   |
+| `@nestjs/swagger`  | `^7.0.0 \|\| ^8.0.0 \|\| ^11.0.0 \|\| ^12.0.0` | No (optional, for OpenAPI integration) |
 
 > **Note:** `reflect-metadata` must be imported once at your application's entry point. NestJS's standard bootstrap already does this, so no extra setup is needed in a typical app — the library relies on it for `@ProblemType()` decorator metadata.
 
@@ -321,6 +321,8 @@ instanceStrategy: (request) => {
 
 When `false` (default), exceptions that are not `HttpException` instances are passed to NestJS's default error handling via `super.catch()`. When `true`, any throwable — including plain `Error` objects and non-HTTP exceptions — is caught and produces a generic 500 Problem Details response. Internal error information is never exposed in the response body.
 
+Errors raised by the HTTP adapter itself keep their own status (e.g. a 413 for an oversized body), matching NestJS's default handling. Two kinds are recognized by their `statusCode` plus a marker: errors built by the [`http-errors`](https://www.npmjs.com/package/http-errors) package, which Express's body parser throws, carry a boolean `expose`; Fastify's own errors carry an `FST_` code. The message becomes `detail` only for client errors (for `http-errors`, only when `expose` is `true`). Other errors that merely carry a `statusCode` still produce a 500.
+
 ```typescript
 Rfc9457Module.forRoot({ catchAllExceptions: true });
 ```
@@ -365,10 +367,10 @@ If the returned `ProblemDetail` omits `status`, the factory falls back to `excep
 
 ### Status invariants
 
-RFC 9457 problem responses are error responses, so **every problem response this library emits carries a 400–599 status**. Two rules enforce that:
+**Every problem response this library emits carries a 400–599 status.** This is library policy, not an RFC requirement: RFC 9457 allows problem details with any HTTP status code, but notes that they "most naturally fit the semantics of 4xx and 5xx responses" ([§1](https://www.rfc-editor.org/rfc/rfc9457.html#section-1)). Two rules enforce the policy:
 
 1. A `status` supplied by `exceptionMapper`, `@ProblemType()` metadata, or `ProblemDetailException` must be an integer in 400–599. A value outside the range is ignored — the library logs a warning and falls back to `exception.getStatus()` (for an `HttpException`) or `500`.
-2. An `HttpException` whose own status is outside 400–599 (e.g. `new HttpException('moved', 302)`) is **not** rendered as a problem document at all. The filter hands it back to NestJS, which sends its standard response at the requested status. A 3xx carrying `application/problem+json` would be non-conformant, and silently rewriting a deliberate redirect into a 500 would be worse.
+2. An `HttpException` whose own status is outside 400–599 (e.g. `new HttpException('moved', 302)`) is **not** rendered as a problem document at all. The filter hands it back to NestJS, which sends its standard response at the requested status. A redirect or success response is not a problem to report, and silently rewriting a deliberate redirect into a 500 would be worse.
 
 An `exceptionMapper` still takes precedence: if it claims such an exception and returns a valid error status, that problem response is sent normally.
 
@@ -376,7 +378,7 @@ If you call `ProblemDetailsFactory` directly, rule 2 does not apply — the fact
 
 ### `onUnhandled`
 
-**Type**: `(exception: unknown, request: Rfc9457Request, problem: ProblemDetail) => void` | **Default**: built-in `Logger.error(...)` (context `Rfc9457ExceptionFilter`)
+**Type**: `(exception: unknown, request: Rfc9457Request, problem: Readonly<ProblemDetail>) => void` | **Default**: built-in `Logger.error(...)` (context `Rfc9457ExceptionFilter`)
 
 Called when a non-`HttpException` reaches the catch-all branch (i.e. `catchAllExceptions: true` AND the `exceptionMapper` returned `null`). Use this to send unhandled exceptions to a structured sink (Sentry, Datadog, a custom pino child logger) or to suppress the default log entirely.
 
@@ -397,7 +399,7 @@ Rfc9457Module.forRoot({
 });
 ```
 
-The third parameter is the fully resolved problem body that is about to be sent. Treat it as read-only: the response is serialized from the same object as soon as the callback returns, so mutating it changes what the client receives, which is not what this hook is for.
+The third parameter is the fully resolved problem body that is about to be sent. It is typed `Readonly` because the response is serialized from the same object as soon as the callback returns: mutating it (through a cast, or through a nested extension value the shallow `Readonly` does not cover) changes what the client receives, which is not what this hook is for.
 
 **The filter still sends the generic 500 Problem Details response after invoking `onUnhandled`.** This callback exists purely for observability — it never changes the HTTP response.
 
@@ -405,7 +407,7 @@ When `onUnhandled` is **not** provided, the library calls `Logger.error(...)` wi
 
 ### `responseHeaders`
 
-**Type**: `(problem: ProblemDetail, exception: unknown, request: Rfc9457Request) => Record<string, string> | undefined` | **Default**: `undefined`
+**Type**: `(problem: Readonly<ProblemDetail>, exception: unknown, request: Rfc9457Request) => Record<string, string> | undefined` | **Default**: `undefined`
 
 Supplies transport response headers that accompany a problem response. Some statuses are only fully specified by a header: `Retry-After` on 429 and 503, `WWW-Authenticate` on 401. Those belong in the header block, not the body, and this is the channel for them.
 
@@ -423,7 +425,7 @@ Rfc9457Module.forRoot({
 
 Called once per problem response with the resolved body, the originating exception, and the request. Return `undefined` to add nothing.
 
-`Content-Type` is reserved: it is written after these headers and always ends up `application/problem+json`. A throw inside the callback is contained like every other callback — it is logged and the response goes out without the extra headers.
+`Content-Type` is reserved: it is written after these headers and always ends up `application/problem+json`. A throw inside the callback is contained like every other callback — it is logged and the response goes out without the extra headers. Each header name and value, whether from this callback or from a `ProblemDetailException`, is checked with Node's own header validation first; an invalid entry (e.g. a value containing a newline) is dropped and logged by name, and the rest of the response is sent unchanged.
 
 For a header that belongs to one specific occurrence rather than to a global policy, pass it at the throw site instead — see [`ProblemDetailException`](#problemdetailexception-one-off-problems-with-extension-members). Throw-site headers are applied first, and this callback is merged over them, so a global policy can override a throw-site value.
 
@@ -479,6 +481,11 @@ replaces the problem-details response.
 - `instanceStrategy` throws → logged; the `instance` member is omitted.
 - `onUnhandled` throws → logged together with the original exception; the
   generic 500 problem response is still sent.
+- `responseHeaders` throws → logged; the response is sent without the
+  callback's headers.
+- A header entry is invalid (from `responseHeaders` or a
+  `ProblemDetailException`) → that entry is dropped and logged by name, never
+  by value; the remaining headers and the problem response are sent.
 
 Callback errors are never included in the response body.
 
@@ -982,7 +989,7 @@ export class InsufficientFundsProblemDto extends ProblemDetailDto {
 | ---------------------------- | ------------------------------------------------------------------------------------ |
 | `ProblemDetailDto`           | The five standard RFC 9457 fields (`type`, `title`, `status`, `detail`, `instance`)  |
 | `ValidationProblemDetailDto` | Extends `ProblemDetailDto` with `errors: ValidationErrorDto[]` for Tier 2 validation |
-| `ValidationErrorDto`         | Structured validation error (`property`, `constraints?`, `children?`)                |
+| `ValidationErrorDto`         | Structured validation error (`property?`, `constraints?`, `children?`)               |
 
 ### Design note
 
@@ -1054,10 +1061,12 @@ export class MySpecialExceptionFilter extends BaseExceptionFilter {
     // Write through the HTTP adapter so the filter works on Express and
     // Fastify alike, and set the RFC 9457 media type explicitly — the
     // adapter's default is application/json, which would make the response
-    // non-conformant even though the body is correct.
+    // non-conformant even though the body is correct. Pass a serialized
+    // string: given an object whose `statusCode` is >= 400, both adapters
+    // reset Content-Type to application/json.
     const httpAdapter = this.adapterHost.httpAdapter;
     httpAdapter.setHeader(response, 'Content-Type', PROBLEM_CONTENT_TYPE);
-    httpAdapter.reply(response, body, status);
+    httpAdapter.reply(response, JSON.stringify(body), status);
   }
 }
 ```
