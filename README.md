@@ -321,7 +321,7 @@ instanceStrategy: (request) => {
 
 When `false` (default), exceptions that are not `HttpException` instances are passed to NestJS's default error handling via `super.catch()`. When `true`, any throwable — including plain `Error` objects and non-HTTP exceptions — is caught and produces a generic 500 Problem Details response. Internal error information is never exposed in the response body.
 
-One kind of non-`HttpException` keeps its own status: errors built by the [`http-errors`](https://www.npmjs.com/package/http-errors) package, which Express's body parser throws (e.g. a 413 for an oversized body). They are recognized by their `statusCode` and boolean `expose` members, matching NestJS's default handling, and their message becomes `detail` only when `expose` is `true`. Other errors that merely carry a `statusCode` still produce a 500.
+Errors raised by the HTTP adapter itself keep their own status (e.g. a 413 for an oversized body), matching NestJS's default handling. Two kinds are recognized by their `statusCode` plus a marker: errors built by the [`http-errors`](https://www.npmjs.com/package/http-errors) package, which Express's body parser throws, carry a boolean `expose`; Fastify's own errors carry an `FST_` code. The message becomes `detail` only for client errors (for `http-errors`, only when `expose` is `true`). Other errors that merely carry a `statusCode` still produce a 500.
 
 ```typescript
 Rfc9457Module.forRoot({ catchAllExceptions: true });

@@ -803,7 +803,7 @@ describe('ProblemDetailsFactory', () => {
     });
   });
 
-  describe('adapter-generated HTTP errors (http-errors shape)', () => {
+  describe('adapter-generated HTTP errors (http-errors and Fastify)', () => {
     // Mirrors what the `http-errors` package builds for Express's body parser:
     // an Error carrying `status`, `statusCode`, and a boolean `expose` flag that
     // says whether the message is safe to show the client.
@@ -854,6 +854,30 @@ describe('ProblemDetailsFactory', () => {
     it('ignores a statusCode outside the error range', () => {
       const factory = createFactory();
       const { status, body } = factory.create(httpError(302, 'moved', true), mockRequest);
+      expect(status).toBe(500);
+      expect(body.detail).toBeUndefined();
+    });
+
+    it('preserves the status of a Fastify body-limit error (Fastify 4, NestJS 10)', () => {
+      // @fastify/error instances carry an FST_ code and statusCode, no `expose`.
+      const factory = createFactory();
+      const fastifyError = Object.assign(new Error('Request body is too large'), {
+        name: 'FastifyError',
+        code: 'FST_ERR_CTP_BODY_TOO_LARGE',
+        statusCode: 413,
+      });
+      const { status, body } = factory.create(fastifyError, mockRequest);
+      expect(status).toBe(413);
+      expect(body.detail).toBe('Request body is too large');
+    });
+
+    it('omits detail for a 5xx Fastify error', () => {
+      const factory = createFactory();
+      const fastifyError = Object.assign(new Error('internal plugin state'), {
+        code: 'FST_ERR_SOMETHING',
+        statusCode: 500,
+      });
+      const { status, body } = factory.create(fastifyError, mockRequest);
       expect(status).toBe(500);
       expect(body.detail).toBeUndefined();
     });

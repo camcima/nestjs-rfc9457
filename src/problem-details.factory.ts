@@ -122,12 +122,13 @@ export class ProblemDetailsFactory {
     }
 
     // Step 6: Adapter-generated HTTP errors. Express's body parser (and other
-    // middleware built on `http-errors`) throws errors that carry a client-error
-    // status but do not extend HttpException. NestJS's own handler preserves
-    // their status, so the catch-all path must too, or an oversized body turns
-    // into a 500. Recognition requires http-errors' boolean `expose` flag, so an
-    // arbitrary error that merely has a `statusCode` (e.g. an SDK reporting a
-    // downstream 404) stays an internal failure.
+    // middleware built on `http-errors`) and Fastify itself throw errors that
+    // carry a client-error status but do not extend HttpException. NestJS's own
+    // handler preserves their status, so the catch-all path must too, or an
+    // oversized body turns into a 500. Recognition requires http-errors'
+    // boolean `expose` flag or Fastify's `FST_` error code, so an arbitrary
+    // error that merely has a `statusCode` (e.g. an SDK reporting a downstream
+    // 404) stays an internal failure.
     if (!result) {
       result = this.handleHttpError(exception);
     }
@@ -303,12 +304,25 @@ export class ProblemDetailsFactory {
 
   private handleHttpError(exception: unknown): ProblemDetail | null {
     if (typeof exception !== 'object' || exception === null) return null;
-    const { statusCode, expose, message } = exception as Record<string, unknown>;
-    if (!this.isErrorStatus(statusCode) || typeof expose !== 'boolean') return null;
+    const { statusCode, expose, code, message } = exception as Record<string, unknown>;
+    if (!this.isErrorStatus(statusCode)) return null;
+
+    let exposeMessage: boolean;
+    if (typeof expose === 'boolean') {
+      // http-errors: `expose` is its own verdict on whether the message is
+      // client-safe (true for 4xx, false for 5xx by default).
+      exposeMessage = expose;
+    } else if (typeof code === 'string' && code.startsWith('FST_')) {
+      // @fastify/error (e.g. FST_ERR_CTP_BODY_TOO_LARGE, which NestJS 10 on
+      // Fastify 4 passes through unwrapped). Fastify's own handler sends 4xx
+      // messages to the client; apply the same rule.
+      exposeMessage = statusCode < 500;
+    } else {
+      return null;
+    }
+
     const result: ProblemDetail = { status: statusCode };
-    // `expose` is http-errors' own verdict on whether the message is client-safe
-    // (true for 4xx, false for 5xx by default).
-    if (expose && typeof message === 'string' && message.length > 0) {
+    if (exposeMessage && typeof message === 'string' && message.length > 0) {
       result.detail = message;
     }
     return result;
