@@ -13,6 +13,17 @@ commitlint) when a release is cut, so contributors no longer add entries by hand
 The generator only prepends the new section, so the hand-written entries below
 are preserved.
 
+## [0.7.0](https://github.com/camcima/nestjs-rfc9457/compare/v0.6.0...v0.7.0) (2026-09-27)
+
+### Features
+
+* support NestJS 12 ([004064c](https://github.com/camcima/nestjs-rfc9457/commit/004064cd7ee61d674dd2b948076893365ca027eb)), references [#148](https://github.com/camcima/nestjs-rfc9457/issues/148)
+
+### Bug Fixes
+
+* address architecture review findings of 2026-09-26 ([b3ccdfc](https://github.com/camcima/nestjs-rfc9457/commit/b3ccdfce2f8b48a4a882299de97e58d76ca485df))
+* keep Fastify error statuses in catch-all mode ([c9f07f2](https://github.com/camcima/nestjs-rfc9457/commit/c9f07f26a3f4885441adb2a0b84880b0ec541027))
+
 ## [0.6.0] - 2026-08-19
 
 ### Added
