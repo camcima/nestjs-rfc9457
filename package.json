@@ -86,12 +86,14 @@
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.63.0",
-    "unplugin-swc": "^1.5.9",
+    "unplugin-swc": "^2.0.0",
     "vitest": "^4.1.9"
   },
   "pnpm": {
     "overrides": {
       "@babel/core@<7.29.6": "^7.29.6",
+      "@nestjs/platform-express>multer": "^2.5.0",
+      "@nestjs/platform-fastify>fastify": "5.12.7",
       "basic-ftp@<5.3.0": ">=5.3.0",
       "brace-expansion@5.0.5": "5.0.6",
       "fast-uri@<3.1.5": "^3.1.5",
@@ -105,6 +107,7 @@
       "nanoid@<3.3.18": "^3.3.18",
       "path-to-regexp@<8.4.0": ">=8.4.0",
       "qs@<6.16.0": "^6.16.0",
+      "release-it>undici": "^7.30.1",
       "undici@<7.29.0": "^7.29.0"
     }
   },
