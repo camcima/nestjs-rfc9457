@@ -11,8 +11,12 @@ updates:
     ignore:
       # Held by maintainer (2026-10): remove this entry to resume updates
       - dependency-name: '@nestjs/*'
-      # Held by maintainer (2026-10): remove this entry to resume updates
+      # Majors only: @types/node majors track Node.js majors, so moving to a new
+      # one is a deliberate decision rather than a weekly bump. Minor and patch
+      # updates within the current major still flow through.
       - dependency-name: '@types/node'
+        update-types:
+          - version-update:semver-major
     # Dependabot places a dependency in the FIRST group whose patterns match,
     # so order matters here: the catch-all must stay last. Anything matching no
     # group still gets its own PR, which is what keeps majors reviewable.

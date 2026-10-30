@@ -12,7 +12,7 @@
 [![npm version](https://img.shields.io/npm/v/@camcima/nestjs-rfc9457)](https://www.npmjs.com/package/@camcima/nestjs-rfc9457)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20%20%7C%2022%20%7C%2024-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22%20%7C%2024-green.svg)](https://nodejs.org/)
 
 </div>
 
