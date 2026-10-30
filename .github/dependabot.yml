@@ -8,6 +8,11 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: 'chore(deps):'
+    ignore:
+      # Held by maintainer (2026-10): remove this entry to resume updates
+      - dependency-name: '@nestjs/*'
+      # Held by maintainer (2026-10): remove this entry to resume updates
+      - dependency-name: '@types/node'
     # Dependabot places a dependency in the FIRST group whose patterns match,
     # so order matters here: the catch-all must stay last. Anything matching no
     # group still gets its own PR, which is what keeps majors reviewable.
